@@ -1,55 +1,40 @@
 [package]
-name = "multipart"
+name = "multipart-async"
 
-version = "0.5.1"
+version = "0.1.0"
 
 authors = ["Austin Bonander <austin.bonander@gmail.com>"]
 
-description = "A backend-agnostic extension for HTTP libraries that provides support for POST multipart/form-data requests on for both client and server."
+description = "A backend-agnostic extension for asynchronous HTTP libraries that provides support for POST multipart/form-data requests on for both client and server."
 
-keywords = ["form-data", "hyper", "iron", "http", "upload"]
+keywords = ["form-data", "hyper", "async", "http", "upload"]
 
-repository = "http://github.com/cybergeek94/multipart"
+repository = "http://github.com/cybergeek94/multipart-async"
 
-documentation = "http://cybergeek94.github.io/multipart/doc/multipart/index.html"
+documentation = "http://cybergeek94.github.io/multipart-async/doc/multipart-async/index.html"
 
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 env_logger = "0.3"
 log = "0.3"
-mime = "0.1"
-mime_guess = "=1.5"
+mime = "0.2"
+mime_guess = "1.8"
 rand = "0.3"
 tempdir = "0.3"
 
 [dependencies.buf_redux]
-optional = true
-version = "0.1"
+path = "../buf_redux"
 
 [dependencies.hyper]
 optional = true
-version = "0.7"
-
-[dependencies.iron]
-optional = true
-version = "0.2"
+path = "../hyper"
 
 [dependencies.memchr]
 optional = true
 version = "0.1"
 
-[dependencies.nickel]
-optional = true
-version = "0.7"
-
-[dependencies.tiny_http]
-optional = true
-version = "0.5"
-
 [features]
 client = []
 default = ["hyper", "server", "client"]
-server = ["buf_redux", "memchr"]
-#Disabled until Nickel upgrades to Hyper 0.7
-#nickel2 = ["hyper", "nickel"]
+server = ["memchr"]

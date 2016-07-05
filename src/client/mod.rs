@@ -42,25 +42,80 @@ macro_rules! map_self {
 /// Though they perform I/O, the `.write_*()` methods do not return `io::Result<_>` in order to
 /// facilitate method chaining. Upon the first error, all subsequent API calls will be no-ops until
 /// `.send()` is called, at which point the error will be reported.
-pub struct Multipart<S> {
-    writer: MultipartWriter<'static, S>,
+pub struct Multipart<B> {
+    boundary: String,
+    buffer: Buffer,
+    body: B,
 }
 
-impl Multipart<()> {
+impl<B> Multipart<B> {
+    
+    /// Create a new instance with the given body.
+    ///
+    /// ##Note
+    /// You might prefer to call `.build()` on the body for cleaner chaining.
+    pub fn with_body(body: B) -> Self {
+        Multipart {
+            boundary: gen_boundary(),
+            buffer: Buffer::new(),
+            body: body,
+        }
+    }
+
+    /// Create a new instance with the given body and buffer capacity.
+    ///
+    /// ##Note
+    /// You might prefer to call `.with_buffer_cap()` on the body itself
+    /// for brevity.
+    pub fn with_buffer_cap(body: B, buffer_cap: usize) -> Self {
+        Multipart {
+            boundary: gen_boundary(),
+            buffer: Buffer::with_capacity(buffer_cap),
+            body: body,
+        }
+    }
+
     /// Create a new `Multipart` to wrap a request.
     ///
     /// ## Returns Error
     /// If `req.open_stream()` returns an error.
-    pub fn from_request<R: HttpRequest>(req: R) -> Result<Multipart<R::Stream>, R::Error> {
-        let (boundary, stream) = try!(open_stream(req, None));
+    pub fn on_request<R: Request>(&self, req: &mut R) {
+        req.set_method_post();
+        req.set_boundary(&self.boundary);
+    }
 
-        Ok(Multipart {
-            writer: MultipartWriter::new(stream, boundary),
-        })
+}
+
+impl<B: Body> Multipart<B> {
+    /// Signal to the handler that it has time to read into the buffer.
+    fn fill_buf(&mut self) -> io::Result<RequestStatus> {
+        if !self.buffer.is_empty() {
+            return Ok(RequestStatus::Done);
+        }
+
+        let mut field = self.body.current_field();
+
+        
+    }
+
+    fn on_writable<W: Write>(&mut self, out: &mut W) -> io::Result<RequestStatus> {
+        if let RequestStatus::MoreData == try!(self.fill_buf()) {
+            try!(self.buffer.write_to(out));
+            Ok(RequestFields::MoreData)
+        } else {
+            Ok(RequestFields::Done)
+        }
     }
 }
 
-impl<S: HttpStream> Multipart<S> { 
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+enum RequestStatus {
+    MoreData,
+    Done,
+}
+
+impl<B> Multipart<B> { 
     /// Write a text field to this multipart request.
     /// `name` and `val` can be either owned `String` or `&str`.
     ///
@@ -76,7 +131,7 @@ impl<S: HttpStream> Multipart<S> {
     /// If you want to set these values manually, or use another type that implements `Read`, 
     /// use `.write_stream()`.
     ///
-    /// `name` can be either `String` or `&str`, and `path` can be `PathBuf` or `&Path`.
+    /// `name` can be either `String` or `&str`, and `path` can be `PathBuf or `&Path`.
     ///
     /// ##Errors
     /// If there was a problem opening the file (was a directory or didn't exist),
@@ -130,54 +185,11 @@ where <R::Stream as HttpStream>::Error: From<R::Error> {
     }
 }
 
-/// A trait describing an HTTP request that can be used to send multipart data.
-pub trait HttpRequest {
-    /// The HTTP stream type that can be opend by this request, to which the multipart data will be
-    /// written.
-    type Stream: HttpStream;
-    /// The error type for this request. 
-    /// Must be compatible with `io::Error` as well as `Self::HttpStream::Error`
-    type Error: From<io::Error> + Into<<Self::Stream as HttpStream>::Error>;
 
-    /// Set the `Content-Type` header to `multipart/form-data` and supply the `boundary` value.
-    /// If `content_len` is given, set the `Content-Length` header to its value.
-    /// 
-    /// Return `true` if any and all sanity checks passed and the stream is ready to be opened, 
-    /// or `false` otherwise.
-    fn apply_headers(&mut self, boundary: &str, content_len: Option<u64>) -> bool;
+pub trait Request {
+    fn set_method_post(&mut self);
 
-    /// Open the request stream and return it or any error otherwise. 
-    fn open_stream(self) -> Result<Self::Stream, Self::Error>;
-}
-
-/// A trait describing an open HTTP stream that can be written to.
-pub trait HttpStream: Write {
-    /// The request type that opened this stream.
-    type Request: HttpRequest;
-    /// The response type that will be returned after the request is completed.
-    type Response;
-    /// The error type for this stream.
-    /// Must be compatible with `io::Error` as well as `Self::Request::Error`.
-    type Error: From<io::Error> + From<<Self::Request as HttpRequest>::Error>; 
-
-    /// Finalize and close the stream and return the response object, or any error otherwise.
-    fn finish(self) -> Result<Self::Response, Self::Error>;
-}
-
-impl HttpRequest for () {
-    type Stream = io::Sink;
-    type Error = io::Error;
-
-    fn apply_headers(&mut self, _: &str, _: Option<u64>) -> bool { true }
-    fn open_stream(self) -> Result<Self::Stream, Self::Error> { Ok(io::sink()) }
-}
-
-impl HttpStream for io::Sink {
-    type Request = ();
-    type Response = ();
-    type Error = io::Error;
-
-    fn finish(self) -> Result<Self::Response, Self::Error> { Ok(()) }
+    fn set_boundary(&mut self, boundary: &str);
 }
 
 fn gen_boundary() -> String {

@@ -35,15 +35,6 @@ extern crate tempdir;
 #[cfg(feature = "hyper")]
 extern crate hyper;
 
-#[cfg(feature = "iron")]
-extern crate iron;
-
-#[cfg(feature = "nickel")]
-extern crate nickel;
-
-#[cfg(feature = "tiny_http")]
-extern crate tiny_http;
-
 use rand::Rng;
 
 /// Chain a series of results together, with or without previous results.
@@ -83,12 +74,12 @@ macro_rules! chain_result {
 
 #[cfg(feature = "client")]
 pub mod client;
-#[cfg(feature = "server")]
+/*#[cfg(feature = "server")]
 pub mod server;
 
 #[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;
-
+*/
 fn random_alphanumeric(len: usize) -> String {
     rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
