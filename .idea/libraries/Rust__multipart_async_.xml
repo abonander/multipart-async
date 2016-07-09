@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Rust &lt;multipart-async&gt;">
+    <CLASSES>
+      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libstd" />
+      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libcore" />
+      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libcollections" />
+      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/liballoc" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
