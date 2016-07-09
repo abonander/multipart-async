@@ -12,63 +12,28 @@
 //! Also see: [`lazy::Multipart::client_request()`](../lazy/struct.Multipart.html#method.client_request)
 //! and [`lazy::Multipart::client_request_mut()`](../lazy/struct.Multipart.html#method.client_request_mut)
 //! (adaptors for `hyper::client::RequestBuilder`).
-use hyper::client::request::Request;
-use hyper::client::response::Response;
 use hyper::header::{ContentType, ContentLength};
-use hyper::method::Method;
-use hyper::net::{Fresh, Streaming};
-
-use hyper::Error as HyperError;
-
+use hyper::Method;
 use mime::{Mime, TopLevel, SubLevel, Attr, Value};
 
-use super::{HttpRequest, HttpStream};
+use hyper::client::Request as HyperRequest;
 
-/// ####Feature: `hyper`
-impl HttpRequest for Request<Fresh> {
-    type Stream = Request<Streaming>;
-    type Error = HyperError;
+use super::Request;
 
-    /// #Panics
-    /// If `self.method() != Method::Post`.
-    fn apply_headers(&mut self, boundary: &str, content_len: Option<u64>) -> bool {
-        if self.method() != Method::Post {
-            error!(
-                "Expected Hyper request method to be `Post`, was actually `{:?}`",
-                self.method()
-            );
-
-            return false;
-        }
-
-        let headers = self.headers_mut();
-
-        headers.set(ContentType(multipart_mime(boundary)));
-
-        if let Some(size) = content_len {
-            headers.set(ContentLength(size));   
-        }
-
-        debug!("Hyper headers: {}", headers); 
-
-        true
+impl<'req> Request for HyperRequest<'req> {
+    fn set_method(&mut self) {
+        self.set_method(Method::Post);
     }
 
-    fn open_stream(self) -> Result<Self::Stream, Self::Error> {
-        self.start()
+    fn set_boundary(&mut self, boundary: &str) {
+        self.headers_mut().set(content_type(boundary));
     }
-} 
 
-/// ####Feature: `hyper`
-impl HttpStream for Request<Streaming> {
-    type Request = Request<Fresh>;
-    type Response = Response;
-    type Error = HyperError;
-
-    fn finish(self) -> Result<Self::Response, Self::Error> {
-        self.send()
+    fn set_content_len(&mut self, content_len: u64) {
+        self.headers_mut().set(ContentLength(content_len));
     }
 }
+
 
 /// Create a `Content-Type: multipart/form-data;boundary={bound}`
 pub fn content_type(bound: &str) -> ContentType {

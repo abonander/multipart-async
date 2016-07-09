@@ -28,7 +28,7 @@ path = "../buf_redux"
 
 [dependencies.hyper]
 optional = true
-path = "../hyper"
+git = "https://github.com/hyperium/hyper"
 
 [dependencies.memchr]
 optional = true

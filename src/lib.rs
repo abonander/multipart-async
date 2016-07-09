@@ -26,6 +26,8 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
 
+extern crate buf_redux;
+
 extern crate mime;
 extern crate mime_guess;
 extern crate rand;
