@@ -12,7 +12,7 @@ fn main() {
     let mut multipart = chained! {
         "text" => text("Hello, world!"),
         "file" => file("lorem_ipsum.txt"),
-        /* "binary" => stream((io::Cursor::new(stream))) */
+        "binary" => stream((io::Cursor::new(stream))),
     };
 
     while let RequestStatus::MoreData = multipart.on_writable(&mut stdout).unwrap() {}
