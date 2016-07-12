@@ -9,7 +9,7 @@
 //!
 //! Use this when sending POST requests with files to a server.
 use mime::Mime;
-use buf_redux::{self, BufReader};
+use buf_redux::{self, BufReader, copy_buf};
 
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
@@ -22,6 +22,9 @@ use std::path::Path;
 
 #[cfg(feature = "hyper")]
 pub mod hyper;
+
+#[macro_export]
+pub mod chained;
 
 //pub mod lazy;
 
@@ -46,9 +49,9 @@ macro_rules! map_self {
 /// facilitate method chaining. Upon the first error, all subsequent API calls will be no-ops until
 /// `.send()` is called, at which point the error will be reported.
 pub struct Multipart<B> {
-    boundary: String,
+    boundary: Cursor<String>,
     state: BodyState,
-    body: Option<B>,
+    body: B,
 }
 
 impl<B> Multipart<B> {
@@ -59,22 +62,9 @@ impl<B> Multipart<B> {
     /// You might prefer to call `.build()` on the body for cleaner chaining.
     pub fn with_body(body: B) -> Self {
         Multipart {
-            boundary: gen_boundary(),
+            boundary: Cursor::new(gen_boundary()),
             state: BodyState::NextField,
-            body: Some(body),
-        }
-    }
-
-    /// Create a new instance with the given body and buffer capacity.
-    ///
-    /// ##Note
-    /// You might prefer to call `.with_buffer_cap()` on the body itself
-    /// for brevity.
-    pub fn with_buffer_cap(body: B, buffer_cap: usize) -> Self {
-        Multipart {
-            boundary: gen_boundary(),
-            state: BodyState::NextField,
-            body: Some(body),
+            body: body,
         }
     }
 
@@ -84,7 +74,7 @@ impl<B> Multipart<B> {
     /// If `req.open_stream()` returns an error.
     pub fn on_request<R: Request>(&self, req: &mut R) {
         req.set_method();
-        req.set_boundary(&self.boundary);
+        req.set_boundary(self.boundary.get_ref());
     }
 }
 
@@ -92,27 +82,45 @@ impl<B: Body> Multipart<B> {
     fn on_writable<W: Write>(&mut self, out: &mut W) -> io::Result<RequestStatus> {
         use self::BodyState::*;
         match self.state {
-            NextField => if self.body.is_some() {
-                self.state = BodyState::BoundaryBefore;
-                self.on_writable(out)
+            NextField => if !self.body.finished() {
+                self.state = BoundaryBefore;
             } else {
-                Ok(RequestStatus::NullRead)
+                return Ok(RequestStatus::NullRead);
             },
-            BoundaryBefore => {
-
+            BoundaryBefore | BoundaryAfter => {
+                try!(copy_buf(&mut self.boundary, out));
+                
+                if cursor_at_end(&self.boundary) {
+                    self.boundary.set_position(0);
+                    self.state.go_next();
+                } else {
+                    return Ok(RequestStatus::MoreData);
+                }
+            },
+            FieldAttempted(ref mut nulled) => {
+                match try!(self.body.write_field(out)) {
+                    RequestStatus::NullRead => if *nulled {
+                        self.body.pop_field();
+                    } else {
+                        *nulled = true;
+                    },
+                    _ => return Ok(RequestStatus::MoreData),
+                }
             }
-
         }
+
+        self.on_writable(out)
     }
 }
 
+
 #[derive(PartialEq, Eq, Copy, Clone)]
-enum RequestStatus {
+pub enum RequestStatus {
     MoreData,
     NullRead,
 }
 
-type FieldStatus = RequestStatus;
+pub type FieldStatus = RequestStatus;
 
 #[derive(PartialEq, Eq, Copy, Clone)]
 enum BodyState {
@@ -120,6 +128,19 @@ enum BodyState {
     BoundaryBefore,
     FieldAttempted(bool),
     BoundaryAfter,
+}
+
+impl BodyState {
+    fn go_next(&mut self) {
+        use self::BodyState::*;
+
+        *self = match *self {
+            NextField => BoundaryBefore,
+            BoundaryBefore => FieldAttempted(false),
+            FieldAttempted(_) => BoundaryAfter,
+            BoundaryAfter => NextField,
+        }
+    }
 }
 
 pub struct FieldHeader(Cursor<String>);
@@ -197,6 +218,27 @@ pub struct StreamField<R> {
     stream: R,
 }
 
+impl<R: BufRead> StreamField<R> {
+    pub fn new(name: &str, stream: R, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
+        StreamField {
+            header: FieldHeader::header(name, filename, content_type),
+            stream: stream,
+        }
+    }
+}
+
+impl<R: Read> StreamField<BufReader<R>> {
+    pub fn buffer(name: &str, stream: R, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
+        Self::new(name, BufReader::new(stream), content_type, filename)
+    }
+}
+
+impl StreamField<BufReader<File>> {
+    pub fn file<P: AsRef<Path>>(name: &str, path: &P) -> Self {
+        unimplemented!();
+    }
+}
+
 impl<R: BufRead> Field for StreamField<R> {
     fn write_out<W: Write>(&mut self, wrt: &mut W) -> io::Result<FieldStatus> {
         try!(buf_redux::copy_buf(&mut self.header.0, wrt));
@@ -222,6 +264,10 @@ pub trait Request {
 
 pub trait Body {
     fn write_field<W: Write>(&mut self, wrt: &mut W) -> io::Result<FieldStatus>;
+
+    fn pop_field(&mut self);
+
+    fn finished(&self) -> bool;
 }
 
 fn gen_boundary() -> String {
