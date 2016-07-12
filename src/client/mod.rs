@@ -58,6 +58,8 @@ macro_rules! field (
 
 pub mod chained;
 
+pub mod dyn;
+
 //pub mod lazy;
 
 //mod sized;
@@ -162,6 +164,12 @@ impl<B: Body> Multipart<B> {
     }
 }
 
+impl<B: Body> From<B> for Multipart<B> {
+    fn from(body: B) -> Self {
+        Self::with_body(body)
+    }
+}
+
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub enum RequestStatus {
     MoreData,
@@ -195,23 +203,23 @@ pub struct FieldHeader(Cursor<String>);
 
 impl FieldHeader {
     fn text(name: &str) -> Self {
-        Self::header(name, None, None)
+        Self::new(name, None, None)
     }
 
     fn file(name: &str, path: &Path) -> Self {
         let (mime, filename) = mime_filename(path);
-        Self::header(name, filename, Some(&mime))
+        Self::new(name, Some(&mime), filename)
     }
 
-    fn stream(name: &str, filename: Option<&str>, content_type: Option<&Mime>) -> Self {
+    fn stream(name: &str, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
         if let Some(content_type) = content_type {
-            Self::header(name, filename, Some(content_type))
+            Self::new(name, Some(&content_type), filename)
         } else {
-            Self::header(name, filename, Some(&::mime_guess::octet_stream()))
+            Self::new(name, Some(&::mime_guess::octet_stream()), None)
         }
     }
 
-    fn header(name: &str, filename: Option<&str>, content_type: Option<&Mime>) -> Self {
+    fn new(name: &str, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
         let mut header = format!("\r\nContent-Disposition: form-data; name=\"{}\"", name);
         filename.map(|filename| write!(header, "; filename=\"{}\"", filename));
         content_type.map(|content_type| write!(header, "\r\nContent-Type: {}", content_type));
@@ -271,32 +279,50 @@ impl<'a, S: Into<Cow<'a, str>>> From<S> for CowStr<'a> {
     }
 }
 
+pub type FileField = StreamField<BufReader<File>>;
+
 pub struct StreamField<R> {
     header: FieldHeader,
     stream: R,
 }
 
-impl<R: BufRead> StreamField<R> {
+impl<R: Read> StreamField<BufReader<R>> {
     pub fn new(name: &str, stream: R, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
+        StreamField::buffered(name, BufReader::new(stream), content_type, filename)
+    }
+
+    pub fn boxed<'a>(self) -> StreamField<BufReader<Box<Read + 'a>>> where R: 'a {
         StreamField {
-            header: FieldHeader::stream(name, filename, content_type),
+            header: self.header,
+            stream: self.stream.boxed(),
+        }
+    }
+}
+
+impl<R: BufRead> StreamField<R> {
+    pub fn buffered(name: &str, stream: R, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
+        StreamField {
+            header: FieldHeader::stream(name, content_type, filename),
+            stream: stream,
+        }
+    }
+
+    pub fn boxed_buffered<'a>(self) -> StreamField<Box<BufRead + 'a>> where R: 'a {
+        let stream: Box<BufRead + 'a> = Box::new(self.stream);
+        
+        StreamField {
+            header: self.header,
             stream: stream,
         }
     }
 }
 
-impl<R: Read> StreamField<BufReader<R>> {
-    pub fn buffer(name: &str, stream: R, content_type: Option<&Mime>, filename: Option<&str>) -> Self {
-        Self::new(name, BufReader::new(stream), content_type, filename)
-    }
-}
-
-impl StreamField<BufReader<File>> {
+impl FileField {
     pub fn open_file<P: AsRef<Path>>(name: &str, path: P) -> io::Result<Self> {
         let (mime, filename) = mime_filename(path.as_ref());
         let file = try!(File::open(path.as_ref()));
 
-        Ok(Self::buffer(name, file, Some(&mime), filename))
+        Ok(Self::new(name, file, Some(&mime), filename))
     }
 }
 
@@ -329,8 +355,25 @@ pub trait Body {
     fn pop_field(&mut self);
 
     fn finished(&self) -> bool;
+
+    fn build(self) -> Multipart<Self> where Self: Sized {
+        Multipart::with_body(self)
+    }
 }
 
+impl<'a, B: Body> Body for &'a mut B {
+    fn write_field<W: Write>(&mut self, wrt: &mut W) -> io::Result<FieldStatus> {
+        (**self).write_field(wrt)
+    }
+
+    fn pop_field(&mut self) {
+        (**self).pop_field();
+    }
+
+    fn finished(&self) -> bool {
+        (**self).finished()
+    }
+}
 
 wrap_const! {
     Prefix = "\r\n--",

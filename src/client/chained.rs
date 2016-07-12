@@ -13,14 +13,14 @@ macro_rules! chained {
         {
             use $crate::client::chained::{Chain, AbsFieldLink};
         
-            Chain$(.link(field!($name => $typ($val))))+.build()
+            Chain$(.link(field!($name => $typ($val))))+.into()
         }
     );
     ($($name:expr => $typ:ident($val:tt)),+) => (
         {
             use $crate::client::chained::{Chain, AbsFieldLink};
         
-            Chain$(.link(field!($name => $typ($val))))+.build()
+            Chain$(.link(field!($name => $typ($val))))+.into()
         }
     )
 }
