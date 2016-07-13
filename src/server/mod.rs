@@ -59,7 +59,7 @@ impl Multipart {
 
         Multipart { 
             reader: BoundaryReader::new(boundary),
-            line_buf: String::new(),
+            field: None,
         }
     }
 
@@ -74,28 +74,29 @@ impl Multipart {
     /// If the previously returned entry had contents of type `MultipartField::File`,
     /// calling this again will discard any unread contents of that entry.
     pub fn next_field(&mut self) -> Result<Field> {
-        try!(self.consume_boundary());
-
-        MultipartField::read_from(self)
+        self.field = try!(Field_::read_from(self));
+        Ok(self.get_field().unwrap())    
     }
 
     pub fn get_field(&mut self) -> Option<Field> {
-        self.field.as_mut().map(
+        self.field.as_ref().map(|field| 
+            Field {
+                inner: field,
+                src: &mut self.reader
+            }
+        )
     }
 
     fn read_content_disposition(&mut self) -> Result<Option<ContentDisp>> {
-        self.read_line.map(ContentDisp::read_from)
-        ContentDisp::read_from()
+        self.read_line().map(ContentDisp::read_from)
     }
 
     fn read_content_type(&mut self) -> Result<Option<ContentType>> {
         debug!("Read content type!");
-        self.read_line.map(ContentType::read_from)
+        self.read_line().map(ContentType::read_from)
     } 
 
     fn read_line(&mut self) -> Result<&str> {
-        self.line_buf.clear();
-
         match self.source.try_read_line(&mut self.line_buf) {
             Ok(read) => Ok(&self.line_buf[..read]),
             Err(err) => Err(err),
@@ -135,54 +136,6 @@ pub enum Error {
 }
 
 pub type Result<T> = ::std::result::Result<T, Error>;
-
-
-/// The result of [`Multipart::save_all()`](struct.multipart.html#method.save_all).
-#[derive(Debug)]
-pub enum SaveResult {
-    /// The operation was a total success. Contained are all entries of the request.
-    Full(Entries),
-    /// The operation errored partway through. Contained are the entries gathered thus far,
-    /// as well as the error that ended the process.
-    Partial(Entries, io::Error),
-    /// The `TempDir` for `Entries` could not be constructed. Contained is the error detailing the
-    /// problem.
-    Error(io::Error),
-}
-
-impl SaveResult {
-    /// Take the `Entries` from `self`, if applicable, and discarding
-    /// the error, if any.
-    pub fn to_entries(self) -> Option<Entries> {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) | Partial(entries, _) => Some(entries),
-            Error(_) => None,
-        }
-    }
-
-    /// Decompose `self` to `(Option<Entries>, Option<io::Error>)`
-    pub fn to_opt(self) -> (Option<Entries>, Option<io::Error>) {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) => (Some(entries), None),
-            Partial(entries, error) => (Some(entries), Some(error)),
-            Error(error) => (None, Some(error)),
-        }
-    }
-
-    /// Map `self` to an `io::Result`, discarding the error in the `Partial` case.
-    pub fn to_result(self) -> io::Result<Entries> {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) | Partial(entries, _) => Ok(entries),
-            Error(error) => Err(error),
-        }
-    }
-}
 
 struct ContentType {
     val: Mime,
@@ -284,7 +237,7 @@ struct Field_ {
 }
 
 impl Field_ {
-    fn read_from(&mut Multipart) -> Result<Option<Self>> {
+    fn read_from(multipart: &mut Multipart) -> Result<Option<Self>> {
         let cont_disp = match multipart.read_content_disposition() {
             Ok(Some(cont_disp)) => cont_disp,
             Ok(None) => return Ok(None),
@@ -295,10 +248,10 @@ impl Field_ {
         let content_type = try!(multipart.read_content_type());
 
         Ok(Some(
-            Field {
+            Field_ {
                 name: cont_disp.field_name,
                 cont_type: content_type,
-                filename: cont_disp.filename
+                filename: cont_disp.filename,
                 boundary: None,
             }
         ))
@@ -312,11 +265,11 @@ pub struct Field<'a> {
 
 impl<'a> Field<'a> {
     pub fn content_type(&self) -> Option<&Mime> {
-        self.inner.content_type.as_ref()
+        self.inner.cont_type.as_ref()
     }
 
     pub fn is_text(&self) -> bool {
-        self.inner.content_type.is_none()
+        self.inner.cont_type.is_none()
     }
 
     pub fn available(&self) -> usize {
@@ -326,7 +279,7 @@ impl<'a> Field<'a> {
     pub fn read_string(&mut self) -> Result<Option<&str>> {
         if !self.is_text() { return Ok(None); }
         
-        let buf = self.src.find_boundary());
+        let buf = self.src.find_boundary();
 
         if !self.src.boundary_read() { return Err(ReadMore); }
 
@@ -343,6 +296,8 @@ impl<'a> Field<'a> {
 
     pub fn read_adapter(&mut self) -> Option<ReadField> {
         if self.is_text() { return None; }
+
+        Some(ReadField { src: &mut self.src })
     }
 }
 
@@ -362,192 +317,7 @@ impl<'a> BufRead for ReadField<'a> {
     }
 
     fn consume(&mut self, amt: usize) {
-        self.src.consume()
-    }
-}
-
-/// A field in a multipart request. May be either text or a binary stream (file).
-#[derive(Debug)]
-pub struct MultipartField<'a> {
-    /// The field's name from the form
-    pub name: &'a str,
-    /// The data of the field. Can be text or binary.
-    pub data: MultipartData<'a>,
-}
-
-impl<'a> MultipartField<'a> {
-    fn read_from(multipart: &'a mut Multipart) -> Result<MultipartField<'a>> {
-} 
-
-/// The data of a field in a `multipart/form-data` request.
-#[derive(Debug)]
-pub enum MultipartData<'a> {
-    /// The field's payload is a text string.
-    Text(&'a str),
-    /// The field's payload is a binary stream (file).
-    File(MultipartFile<'a>),
-    // TODO: Support multiple files per field (nested boundaries)
-    // MultiFiles(Vec<MultipartFile>),
-}
-
-impl<'a> MultipartData<'a> {
-    /// Borrow this payload as a text field, if possible.
-    pub fn as_text(&self) -> Option<&str> {
-        match *self {
-            MultipartData::Text(ref s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Borrow this payload as a file field, if possible.
-    /// Mutably borrows so the contents can be read.
-    pub fn as_file(&mut self) -> Option<&mut MultipartFile<'a>> {
-        match *self {
-            MultipartData::File(ref mut file) => Some(file),
-            _ => None,
-        }
-    }
-}
-
-/// A representation of a file in HTTP `multipart/form-data`.
-///
-/// Note that the file is not yet saved to the local filesystem; 
-/// instead, this struct exposes `Read` and `BufRead` impls which point
-/// to the beginning of the file's contents in the HTTP stream. 
-///
-/// You can read it to EOF, or use one of the `save_*()` methods here 
-/// to save it to disk.
-#[derive(Debug)]
-pub struct MultipartFile<'a: 'a> {
-    filename: Option<String>,
-    content_type: Mime,
-    stream: &'a mut BoundaryReader,
-}
-
-impl<'a> MultipartFile<'a> {
-    fn from_stream(filename: Option<String>, 
-                   content_type: Mime, 
-                   stream: &'a mut BoundaryReader) -> MultipartFile<'a> {
-        MultipartFile {
-            filename: filename,
-            content_type: content_type,
-            stream: stream,
-        }    
-    }
-
-    /// Save this file to the given output stream.
-    ///
-    /// If successful, returns the number of bytes written.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_to<W: Write>(&mut self, mut out: W) -> io::Result<u64> {
-        retry_on_interrupt(|| io::copy(self.stream, &mut out))
-    }
-
-    /// Save this file to the given output stream, **truncated** to `limit` 
-    /// (no more than `limit` bytes will be written out).
-    ///
-    /// If successful, returns the number of bytes written.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_to_limited<W: Write>(&mut self, mut out: W, limit: u64) -> io::Result<u64> {
-        retry_on_interrupt(|| io::copy(&mut self.stream.take(limit), &mut out))
-    }
-
-    /// Save this file to `path`.
-    ///
-    /// Returns the saved file info on success, or any errors otherwise.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_as<P: Into<PathBuf>>(&mut self, path: P) -> io::Result<SavedFile> {
-        let path = path.into();
-        let file = try!(create_full_path(&path)); 
-        let size = try!(self.save_to(file));
-
-        Ok(SavedFile {
-            path: path,
-            filename: self.filename.clone(),
-            size: size,
-        })
-    }
-
-    /// Save this file in the directory pointed at by `dir`,
-    /// using a random alphanumeric string as the filename.
-    ///
-    /// Any missing directories in the `dir` path will be created.
-    ///
-    /// Returns the saved file's info on success, or any errors otherwise.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_in<P: AsRef<Path>>(&mut self, dir: P) -> io::Result<SavedFile> {
-        let path = dir.as_ref().join(::random_alphanumeric(RANDOM_FILENAME_LEN));
-        self.save_as(path)
-    }
-
-    /// Save this file to `path`, **truncated** to `limit` (no more than `limit` bytes will be written out).
-    ///
-    /// Any missing directories in the `dir` path will be created.
-    ///
-    /// Returns the saved file's info on success, or any errors otherwise.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_as_limited<P: Into<PathBuf>>(&mut self, path: P, limit: u64) -> io::Result<SavedFile> {
-        let path = path.into();
-        let file = try!(create_full_path(&path));
-        let size = try!(self.save_to_limited(file, limit));
-        
-        Ok(SavedFile {
-            path: path,
-            filename: self.filename.clone(),
-            size: size,
-        })
-    }
-    
-    /// Save this file in the directory pointed at by `dir`,
-    /// using a random alphanumeric string as the filename.
-    ///
-    /// **Truncates** file to `limit` (no more than `limit` bytes will be written out).
-    ///
-    /// Any missing directories in the `dir` path will be created.
-    ///
-    /// Returns the saved file's info on success, or any errors otherwise.
-    ///
-    /// Retries when `io::Error::kind() == io::ErrorKind::Interrupted`.
-    pub fn save_in_limited<P: AsRef<Path>>(&mut self, dir: P, limit: u64) -> io::Result<SavedFile> {
-        let path = dir.as_ref().join(::random_alphanumeric(RANDOM_FILENAME_LEN));
-        self.save_as_limited(path, limit)
-    } 
-
-    /// Get the filename of this entry, if supplied.
-    ///
-    /// ##Warning
-    /// You should treat this value as untrustworthy because it is an arbitrary string provided by
-    /// the client. You should *not* blindly append it to a directory path and save the file there, 
-    /// as such behavior could easily be exploited by a malicious client.
-    pub fn filename(&self) -> Option<&str> {
-        self.filename.as_ref().map(String::as_ref)    
-    }
-
-    /// Get the MIME type (`Content-Type` value) of this file, if supplied by the client, 
-    /// or `"applicaton/octet-stream"` otherwise.
-    pub fn content_type(&self) -> &Mime {
-        &self.content_type    
-    }
-}
-
-impl<'a> Read for MultipartFile<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>{
-        self.stream.read(buf)
-    }
-}
-
-impl<'a> BufRead for MultipartFile<'a> {
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.stream.fill_buf()
-    }
-
-    fn consume(&mut self, amt: usize) {
-        self.stream.consume(amt)
+        self.src.consume(amt)
     }
 }
 
@@ -689,6 +459,53 @@ pub struct SavedFile {
 
     /// The number of bytes written to the disk; may be truncated.
     pub size: u64,
+}
+
+/// The result of [`Multipart::save_all()`](struct.multipart.html#method.save_all).
+#[derive(Debug)]
+pub enum SaveResult {
+    /// The operation was a total success. Contained are all entries of the request.
+    Full(Entries),
+    /// The operation errored partway through. Contained are the entries gathered thus far,
+    /// as well as the error that ended the process.
+    Partial(Entries, io::Error),
+    /// The `TempDir` for `Entries` could not be constructed. Contained is the error detailing the
+    /// problem.
+    Error(io::Error),
+}
+
+impl SaveResult {
+    /// Take the `Entries` from `self`, if applicable, and discarding
+    /// the error, if any.
+    pub fn to_entries(self) -> Option<Entries> {
+        use self::SaveResult::*;
+
+        match self {
+            Full(entries) | Partial(entries, _) => Some(entries),
+            Error(_) => None,
+        }
+    }
+
+    /// Decompose `self` to `(Option<Entries>, Option<io::Error>)`
+    pub fn to_opt(self) -> (Option<Entries>, Option<io::Error>) {
+        use self::SaveResult::*;
+
+        match self {
+            Full(entries) => (Some(entries), None),
+            Partial(entries, error) => (Some(entries), Some(error)),
+            Error(error) => (None, Some(error)),
+        }
+    }
+
+    /// Map `self` to an `io::Result`, discarding the error in the `Partial` case.
+    pub fn to_result(self) -> io::Result<Entries> {
+        use self::SaveResult::*;
+
+        match self {
+            Full(entries) | Partial(entries, _) => Ok(entries),
+            Error(error) => Err(error),
+        }
+    }
 }
 
 fn retry_on_interrupt<F, T>(mut do_fn: F) -> io::Result<T> where F: FnMut() -> io::Result<T> {

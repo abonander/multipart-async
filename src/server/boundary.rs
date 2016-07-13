@@ -46,7 +46,7 @@ impl BoundaryReader {
 
         while {
             let read = try!(self.buf.read_from(r));
-            total_read += read
+            total_read += read;
             read > 0
         } {}
 
@@ -135,7 +135,7 @@ impl BoundaryReader {
             let buf_len = self.find_boundary().len();
 
             if buf_len == 0 {
-                return Err(Error::MoreData);
+                return Err(Error::ReadMore);
             }
 
             self.buf.consume(buf_len);
@@ -165,7 +165,7 @@ impl BoundaryReader {
                 return Err(ReadMore);
             };
 
-            buf[..newline + 2].read_to_end(out)
+            (&buf[..newline + 2]).read_to_end(out)
                 .expect("Improperly formatted HTTP request")
         };
 
