@@ -31,7 +31,7 @@ pub struct BoundaryReader {
 
 impl BoundaryReader {
     #[doc(hidden)]
-    pub fn from_reader<B: Into<Vec<u8>>>(reader: R, boundary: B) -> BoundaryReader<R> {
+    pub fn new<B: Into<Vec<u8>>>(boundary: B) -> BoundaryReader {
         BoundaryReader {
             buf: Buffer::new(),
             boundary: boundary.into(),
@@ -119,6 +119,12 @@ impl BoundaryReader {
         ret_buf
     }
 
+    pub fn boundary_read(&self) -> bool { self.boundary_read }
+
+    pub fn available(&self) -> usize {
+        self.search_idx
+    }
+
     #[doc(hidden)]
     pub fn consume_boundary(&mut self) -> Result<()> {
         if self.at_end {
@@ -132,7 +138,7 @@ impl BoundaryReader {
                 return Err(Error::MoreData);
             }
 
-            self.consume(buf_len);
+            self.buf.consume(buf_len);
         }
 
         self.buf.consume(self.search_idx + self.boundary.len());
@@ -169,7 +175,7 @@ impl BoundaryReader {
     }
 }
 
-impl<R> Read for BoundaryReader<R> where R: Read {
+impl Read for BoundaryReader {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         // This shouldn't ever be an error so unwrapping is fine.
         let read = self.find_boundary().read(out).unwrap();
@@ -178,7 +184,7 @@ impl<R> Read for BoundaryReader<R> where R: Read {
     }
 }
 
-impl<R> BufRead for BoundaryReader<R> where R: Read {
+impl BufRead for BoundaryReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         Ok(self.find_boundary())
     }
