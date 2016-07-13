@@ -38,52 +38,32 @@ mod boundary;
 #[cfg(feature = "hyper")]
 pub mod hyper;
 
-#[cfg(feature = "iron")]
-pub mod iron;
-
-#[cfg(feature = "nickel")]
-pub mod nickel;
-
-#[cfg(feature = "tiny_http")]
-pub mod tiny_http;
-
 const RANDOM_FILENAME_LEN: usize = 12;
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
-pub struct Multipart<B> {
-    source: BoundaryReader<B>,
+pub struct Multipart {
+    reader: BoundaryReader,
     line_buf: String, 
 }
 
-impl Multipart<()> {
-    /// If the given `HttpRequest` is a multipart/form-data POST request,
-    /// return the request body wrapped in the multipart reader. Otherwise,
-    /// returns the original request.
-    pub fn from_request<R: HttpRequest>(req: R) -> Result<Multipart<R::Body>, R> {
-        //FIXME: move `map` expr to `Some` arm when nonlexical borrow scopes land.
-        let boundary = match req.multipart_boundary().map(String::from) {
-            Some(boundary) => boundary,
-            None => return Err(req),
-        };
-
-        Ok(Multipart::with_body(req.body(), boundary))        
-    }   
-}
-
-impl<B: Read> Multipart<B> {
+impl Multipart {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
-    pub fn with_body<Bnd: Into<String>>(body: B, boundary: Bnd) -> Self {
+    pub fn new<B: Into<String>>(boundary: B) -> Self {
         let boundary = prepend_str("--", boundary.into());
 
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            source: BoundaryReader::from_reader(body, boundary),
+            reader: BoundaryReader::new(boundary),
             line_buf: String::new(),
         }
+    }
+
+    pub fn read_from<R: Read>(&mut self, r: &mut R) -> io::Result<usize> {
+        self.reader.read_from(r)
     }
 
     /// Read the next entry from this multipart request, returning a struct with the field's name and
@@ -92,17 +72,14 @@ impl<B: Read> Multipart<B> {
     /// ##Warning: Risk of Data Loss
     /// If the previously returned entry had contents of type `MultipartField::File`,
     /// calling this again will discard any unread contents of that entry.
-    pub fn read_entry(&mut self) -> io::Result<Option<MultipartField<B>>> {
-        if !try!(self.consume_boundary()) {
-            return Ok(None);
-        }
+    pub fn read_entry(&mut self) -> Result<Field> {
+        try!(self.consume_boundary());
 
         MultipartField::read_from(self)
     }
 
-    fn read_content_disposition(&mut self) -> io::Result<Option<ContentDisp>> {
-        let line = try!(self.read_line());
-        Ok(ContentDisp::read_from(line))
+    fn read_content_disposition(&mut self) -> Result<ContentDisp> {
+        ContentDisp::read_from(self.read_line())
     }
 
     /// Call `f` for each entry in the multipart request.
@@ -125,105 +102,12 @@ impl<B: Read> Multipart<B> {
         debug!("Read content type!");
         let line = try!(self.read_line());
         Ok(ContentType::read_from(line))
-    }
-
-    /// Read the request fully, parsing all fields and saving all files in a new temporary
-    /// directory under the OS temporary directory. 
-    ///
-    /// If there is an error in reading the request, returns the partial result along with the
-    /// error. See [`SaveResult`](enum.saveresult.html) for more information.
-    pub fn save_all(&mut self) -> SaveResult {
-        let mut entries = match Entries::new_tempdir() {
-            Ok(entries) => entries,
-            Err(err) => return SaveResult::Error(err),
-        };
- 
-        match self.read_to_entries(&mut entries, None) {
-            Ok(()) => SaveResult::Full(entries),
-            Err(err) => SaveResult::Partial(entries, err),
-        }
-    }
-
-    /// Read the request fully, parsing all fields and saving all files in a new temporary
-    /// directory under `dir`. 
-    ///
-    /// If there is an error in reading the request, returns the partial result along with the
-    /// error. See [`SaveResult`](enum.saveresult.html) for more information.
-    pub fn save_all_under<P: AsRef<Path>>(&mut self, dir: P) -> SaveResult {
-        let mut entries = match Entries::new_tempdir_in(dir) {
-            Ok(entries) => entries,
-            Err(err) => return SaveResult::Error(err),
-        };
-
-        match self.read_to_entries(&mut entries, None) {
-            Ok(()) => SaveResult::Full(entries),
-            Err(err) => SaveResult::Partial(entries, err),
-        }
-    }
-
-    /// Read the request fully, parsing all fields and saving all fields in a new temporary
-    /// directory under the OS temporary directory.
-    ///
-    /// Files larger than `limit` will be truncated to `limit`.
-    ///
-    /// If there is an error in reading the request, returns the partial result along with the
-    /// error. See [`SaveResult`](enum.saveresult.html) for more information.
-    pub fn save_all_limited(&mut self, limit: u64) -> SaveResult {
-        let mut entries = match Entries::new_tempdir() {
-            Ok(entries) => entries,
-            Err(err) => return SaveResult::Error(err),
-        };
-
-        match self.read_to_entries(&mut entries, Some(limit)) {
-            Ok(()) => SaveResult::Full(entries),
-            Err(err) => SaveResult::Partial(entries, err),
-        }
-    }
-
-    /// Read the request fully, parsing all fields and saving all files in a new temporary
-    /// directory under `dir`. 
-    ///
-    /// Files larger than `limit` will be truncated to `limit`.
-    ///
-    /// If there is an error in reading the request, returns the partial result along with the
-    /// error. See [`SaveResult`](enum.saveresult.html) for more information.
-    pub fn save_all_under_limited<P: AsRef<Path>>(&mut self, dir: P, limit: u64) -> SaveResult {
-        let mut entries = match Entries::new_tempdir_in(dir) {
-            Ok(entries) => entries,
-            Err(err) => return SaveResult::Error(err),
-        };
-
-        match self.read_to_entries(&mut entries, Some(limit)) {
-            Ok(()) => SaveResult::Full(entries),
-            Err(err) => SaveResult::Partial(entries, err),
-        }
-    }
-
-    fn read_to_entries(&mut self, entries: &mut Entries, limit: Option<u64>) -> io::Result<()> {
-        while let Some(field) = try!(self.read_entry()) {
-            match field.data {
-                MultipartData::File(mut file) => {
-                    let file = if let Some(limit) = limit {
-                        try!(file.save_in_limited(&entries.dir, limit))
-                    } else {
-                        try!(file.save_in(&entries.dir))
-                    };
-
-                    entries.files.insert(field.name, file);
-                },
-                MultipartData::Text(text) => {
-                    entries.fields.insert(field.name, text.into());
-                },
-            }
-        }
-
-        Ok(())
     } 
 
-    fn read_line(&mut self) -> io::Result<&str> {
+    fn read_line(&mut self) -> Result<&str> {
         self.line_buf.clear();
 
-        match self.source.read_line(&mut self.line_buf) {
+        match self.source.try_read_line(&mut self.line_buf) {
             Ok(read) => Ok(&self.line_buf[..read]),
             Err(err) => Err(err),
         }
@@ -238,11 +122,11 @@ impl<B: Read> Multipart<B> {
         }
     }
 
-    fn consume_boundary(&mut self) -> io::Result<bool> {
-        try!(self.source.consume_boundary());
+    fn consume_boundary(&mut self) -> bool {
+        self.reader.consume_boundary();
 
         let mut out = [0; 2];
-        let _ = try!(self.source.read(&mut out));
+        let _ = self.reader.read(&mut out);
 
         if *b"\r\n" == out {
             Ok(true)
@@ -256,11 +140,13 @@ impl<B: Read> Multipart<B> {
     }
 }
 
-impl<B> Borrow<B> for Multipart<B> {
-    fn borrow(&self) -> &B {
-        self.source.borrow()
-    }
+pub enum Error {
+    ReadMore,
+    AtEnd,
 }
+
+pub type Result<T> = Result<T, Error>;
+
 
 /// The result of [`Multipart::save_all()`](struct.multipart.html#method.save_all).
 #[derive(Debug)]
@@ -393,24 +279,6 @@ fn get_str_after<'a>(needle: &str, end_val_delim: char, haystack: &'a str) -> Op
 fn get_remainder_after<'a>(needle: &str, haystack: &'a str) -> Option<(&'a str)> {
     let val_start_idx = try_opt!(haystack.find(needle)) + needle.len();
     Some(&haystack[val_start_idx..])
-}
-
-/// A server-side HTTP request that may or may not be multipart.
-///
-/// May be implemented by mutable references if providing the request or body by-value is
-/// undesirable.
-pub trait HttpRequest {
-    /// The body of this request.
-    type Body: Read;
-    /// Get the boundary string of this request if it is a POST request
-    /// with the `Content-Type` header set to `multipart/form-data`.
-    ///
-    /// The boundary string should be supplied as an extra value of the `Content-Type` header, e.g.
-    /// `Content-Type: multipart/form-data; boundary={boundary}`.
-    fn multipart_boundary(&self) -> Option<&str>;
-
-    /// Return the request body for reading.
-    fn body(self) -> Self::Body;
 }
 
 /// A field in a multipart request. May be either text or a binary stream (file).

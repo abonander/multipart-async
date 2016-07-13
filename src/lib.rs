@@ -74,13 +74,23 @@ macro_rules! chain_result {
     );
 }
 
+#[macro_export]
+macro_rules! try_opt (
+    ($expr:expr) => (
+        match $expr {
+            Some(val) => val,
+            None => return None,
+        }
+    )
+);
+
 #[cfg(feature = "client")]
 pub mod client;
 
-/*#[cfg(feature = "server")]
+#[cfg(feature = "server")]
 pub mod server;
 
-#[cfg(all(test, feature = "client", feature = "server"))]
+/*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;
 */
 fn random_alphanumeric(len: usize) -> String {

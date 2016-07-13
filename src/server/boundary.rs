@@ -7,7 +7,7 @@
 extern crate buf_redux;
 extern crate memchr;
 
-use self::buf_redux::BufReader;
+use self::buf_redux::Buffer;
 use self::memchr::memchr;
 
 use std::cmp;
@@ -16,21 +16,24 @@ use std::borrow::Borrow;
 use std::io;
 use std::io::prelude::*;
 
+use super::{Result, Error};
+use super::Error::*;
+
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
 #[derive(Debug)]
-pub struct BoundaryReader<R> {
-    buf: BufReader<R>,
+pub struct BoundaryReader {
+    buf: Buffer,
     boundary: Vec<u8>,
     search_idx: usize,
     boundary_read: bool,
     at_end: bool,
 }
 
-impl<R> BoundaryReader<R> where R: Read {
+impl BoundaryReader {
     #[doc(hidden)]
     pub fn from_reader<B: Into<Vec<u8>>>(reader: R, boundary: B) -> BoundaryReader<R> {
         BoundaryReader {
-            buf: BufReader::new(reader),
+            buf: Buffer::new(),
             boundary: boundary.into(),
             search_idx: 0,
             boundary_read: false,
@@ -38,10 +41,22 @@ impl<R> BoundaryReader<R> where R: Read {
         }
     }
 
-    fn read_to_boundary(&mut self) -> io::Result<&[u8]> {
+    pub fn read_from<R: Read>(&mut self, r: &mut R) -> io::Result<usize> {
+        let mut total_read = 0;
+
+        while {
+            let read = try!(self.buf.read_from(r));
+            total_read += read
+            read > 0
+        } {}
+
+        Ok(total_read)
+    }
+
+    pub fn find_boundary(&mut self) -> &[u8] {
         use log::LogLevel;
 
-        let buf = try!(fill_buf_min(&mut self.buf, self.boundary.len()));
+        let buf = self.buf.get();
         
         if log_enabled!(LogLevel::Trace) {
             trace!("Buf: {:?}", String::from_utf8_lossy(buf));
@@ -101,20 +116,20 @@ impl<R> BoundaryReader<R> where R: Read {
             trace!("Returning buf: {:?}", String::from_utf8_lossy(ret_buf));
         }
 
-        Ok(ret_buf)
+        ret_buf
     }
 
     #[doc(hidden)]
-    pub fn consume_boundary(&mut self) -> io::Result<()> {
+    pub fn consume_boundary(&mut self) -> Result<()> {
         if self.at_end {
-            return Ok(());
+            return Err(Error::AtEnd);
         }
 
         while !self.boundary_read {
-            let buf_len = try!(self.read_to_boundary()).len();
+            let buf_len = self.find_boundary().len();
 
             if buf_len == 0 {
-                break;
+                return Err(Error::MoreData);
             }
 
             self.consume(buf_len);
@@ -134,22 +149,30 @@ impl<R> BoundaryReader<R> where R: Read {
     pub fn set_boundary<B: Into<Vec<u8>>>(&mut self, boundary: B) {
         self.boundary = boundary.into();
     }
-}
 
-impl<R> Borrow<R> for BoundaryReader<R> {
-    fn borrow(&self) -> &R {
-        self.buf.get_ref() 
+    pub fn try_read_line(&mut self, out: &mut String) -> Result<()> {
+        let read = {
+            let buf = self.find_boundary();
+            let newline = if let Some(idx) = find_bytes(b"\r\n", buf) {
+                idx
+            } else {
+                return Err(ReadMore);
+            };
+
+            buf[..newline + 2].read_to_end(out)
+                .expect("Improperly formatted HTTP request")
+        };
+
+        self.consume(read);
+
+        Ok(())        
     }
 }
 
 impl<R> Read for BoundaryReader<R> where R: Read {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        let read = {
-            let mut buf = try!(self.read_to_boundary());
-            // This shouldn't ever be an error so unwrapping is fine.
-            buf.read(out).unwrap()
-        };
-
+        // This shouldn't ever be an error so unwrapping is fine.
+        let read = self.find_boundary().read(out).unwrap();
         self.consume(read);
         Ok(read)
     }
@@ -157,7 +180,7 @@ impl<R> Read for BoundaryReader<R> where R: Read {
 
 impl<R> BufRead for BoundaryReader<R> where R: Read {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.read_to_boundary()
+        Ok(self.find_boundary())
     }
 
     fn consume(&mut self, amt: usize) {
@@ -170,14 +193,6 @@ impl<R> BufRead for BoundaryReader<R> where R: Read {
     }
 }
 
-fn fill_buf_min<R: Read>(buf: &mut BufReader<R>, min: usize) -> io::Result<&[u8]> {
-    if buf.available() < min {
-        try!(buf.read_into_buf());
-    }
-
-    Ok(buf.get_buf())
-}
-
 fn first_nonmatching_idx(left: &[u8], right: &[u8]) -> Option<usize> {
     for (idx, (lb, rb)) in left.iter().zip(right).enumerate() {
         if lb != rb {
@@ -186,6 +201,19 @@ fn first_nonmatching_idx(left: &[u8], right: &[u8]) -> Option<usize> {
     }
 
     None
+}
+
+fn find_bytes(needle: &[u8], haystack: &[u8]) -> Option<usize> {
+    if needle.len() == 0 || haystack.len() == 0 { return None; }
+
+    let start = try_opt!(memchr(needle[0], haystack));
+
+    if start + needle.len() <= haystack.len() &&
+            needle == &haystack[start .. start + needle.len()] {
+        Some(start)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
