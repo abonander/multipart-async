@@ -45,9 +45,8 @@ macro_rules! try_opt_readmore (
 
 mod boundary;
 
-/*#[cfg(feature = "hyper")]
-pub mod hyper;
-*/
+#[cfg(feature = "hyper")]
+mod hyper;
 
 const RANDOM_FILENAME_LEN: usize = 12;
 
