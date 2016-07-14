@@ -23,12 +23,22 @@ use std::path::{Path, PathBuf};
 use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryReader;
+use self::Error::*;
 
 macro_rules! try_opt (
     ($expr:expr) => (
         match $expr {
             Some(val) => val,
             None => return None,
+        }
+    )
+);
+
+macro_rules! try_opt_readmore (
+    ($expr:expr) => (
+        match $expr {
+            Some(val) => val,
+            None => return Err(ReadMore),
         }
     )
 );
@@ -46,7 +56,7 @@ const RANDOM_FILENAME_LEN: usize = 12;
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
 pub struct Multipart {
     reader: BoundaryReader,
-    field: Option<Field_>, 
+    state: State, 
 }
 
 impl Multipart {
@@ -59,7 +69,7 @@ impl Multipart {
 
         Multipart { 
             reader: BoundaryReader::new(boundary),
-            field: None,
+            state: State::ContDisp,
         }
     }
 
@@ -74,46 +84,58 @@ impl Multipart {
     /// If the previously returned entry had contents of type `MultipartField::File`,
     /// calling this again will discard any unread contents of that entry.
     pub fn next_field(&mut self) -> Result<Field> {
-        self.field = try!(Field_::read_from(self));
-        Ok(self.get_field().unwrap())    
+        try!(self.consume_boundary());
+
+        while !self.state.on_field() {
+            if self.state.at_end() {
+                return Err(AtEnd);
+            }
+
+            try!(self.next_state());
+        }
+
+        Ok(self.get_field().unwrap())
     }
 
     pub fn get_field(&mut self) -> Option<Field> {
-        self.field.as_ref().map(|field| 
-            Field {
+        if let State::Field(ref mut field) = self.state { 
+            Some(Field {
                 inner: field,
                 src: &mut self.reader
-            }
-        )
+            })
+        } else {
+            None
+        }
     }
 
-    fn read_content_disposition(&mut self) -> Result<Option<ContentDisp>> {
-        self.read_line().map(ContentDisp::read_from)
-    }
+    fn next_state(&mut self) -> Result<()> {
+        self.state = match self.state {
+            State::ContDisp => {
+                let mut buf = String::new();
+                let _ = try!(self.reader.try_read_line(&mut buf));
+                
+                let cont_disp = try_opt_readmore!(ContentDisp::read_from(&buf));
+                
+                State::ContType(cont_disp)
+            },
+            State::ContType(ref mut cont_disp) => {
+                let mut buf = String::new();
+                let _ = try!(self.reader.try_read_line(&mut buf));
 
-    fn read_content_type(&mut self) -> Result<Option<ContentType>> {
-        debug!("Read content type!");
-        self.read_line().map(ContentType::read_from)
+                let cont_disp = mem::replace(cont_disp, ContentDisp::default()); 
+                let cont_type = ContentType::read_from(&buf);
+
+                State::Field(Field_::new(cont_disp, cont_type))
+            },
+            State::Field(_) => State::ContDisp,
+            State::AtEnd => State::AtEnd,
+        };
+
+        Ok(())
     } 
 
-    fn read_line(&mut self) -> Result<&str> {
-        match self.source.try_read_line(&mut self.line_buf) {
-            Ok(read) => Ok(&self.line_buf[..read]),
-            Err(err) => Err(err),
-        }
-    }
-
-    fn read_to_string(&mut self) -> io::Result<&str> {
-        self.line_buf.clear();
-
-        match self.source.read_to_string(&mut self.line_buf) {
-            Ok(read) => Ok(&self.line_buf[..read]),
-            Err(err) => Err(err),
-        }
-    }
-
-    fn consume_boundary(&mut self) -> bool {
-        self.reader.consume_boundary();
+    fn consume_boundary(&mut self) -> Result<bool> {
+        try!(self.reader.consume_boundary());
 
         let mut out = [0; 2];
         let _ = self.reader.read(&mut out);
@@ -125,14 +147,39 @@ impl Multipart {
                 warn!("Unexpected 2-bytes after boundary: {:?}", out);
             }
 
+            self.state = State::AtEnd;
+
             Ok(false)
+        }
+    }
+}
+
+enum State {
+    ContDisp,
+    ContType(ContentDisp),
+    Field(Field_),
+    AtEnd
+}
+
+impl State {
+    fn on_field(&self) -> bool {
+        match *self {
+            State::Field(_) => true,
+            _ => false,
+        }
+    }
+
+    fn at_end(&self) -> bool {
+        match *self {
+            State::AtEnd => true,
+            _ => false,
         }
     }
 }
 
 pub enum Error {
     ReadMore,
-    AtEnd,
+    AtEnd
 }
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -172,6 +219,7 @@ fn read_content_type(cont_type: &str) -> Mime {
     cont_type.parse().ok().unwrap_or_else(::mime_guess::octet_stream)
 }
 
+#[derive(Default)]
 struct ContentDisp {
     field_name: String,
     filename: Option<String>,
@@ -225,7 +273,7 @@ fn get_remainder_after<'a>(needle: &str, haystack: &'a str) -> Option<(&'a str)>
 
 fn valid_subslice(bytes: &[u8]) -> &str {
     ::std::str::from_utf8(bytes)
-        .unwrap_or(|err| unsafe { ::std::str::from_utf8_unchecked(&bytes[..err.valid_up_to()]) })
+        .unwrap_or_else(|err| unsafe { ::std::str::from_utf8_unchecked(&bytes[..err.valid_up_to()]) })
 }
 
 struct Field_ {
@@ -237,24 +285,18 @@ struct Field_ {
 }
 
 impl Field_ {
-    fn read_from(multipart: &mut Multipart) -> Result<Option<Self>> {
-        let cont_disp = match multipart.read_content_disposition() {
-            Ok(Some(cont_disp)) => cont_disp,
-            Ok(None) => return Ok(None),
-            Err(err) => return Err(err),
-        };        
+    fn new(cont_disp: ContentDisp, cont_type: Option<ContentType>) -> Self {
+        let (cont_type, boundary) = match cont_type {
+            Some(ct) => (Some(ct.val), ct.boundary),
+            None => (None, None),
+        };
 
-        // Consumes empty line if no ContentType header is found.
-        let content_type = try!(multipart.read_content_type());
-
-        Ok(Some(
-            Field_ {
-                name: cont_disp.field_name,
-                cont_type: content_type,
-                filename: cont_disp.filename,
-                boundary: None,
-            }
-        ))
+        Field_ {
+            name: cont_disp.field_name,
+            cont_type: cont_type,
+            filename: cont_disp.filename,
+            boundary: boundary
+        }
     }
 }
 
@@ -279,9 +321,11 @@ impl<'a> Field<'a> {
     pub fn read_string(&mut self) -> Result<Option<&str>> {
         if !self.is_text() { return Ok(None); }
         
-        let buf = self.src.find_boundary();
+        let _ = self.src.find_boundary();
 
         if !self.src.boundary_read() { return Err(ReadMore); }
+
+        let buf = self.src.find_boundary();
 
         Ok(Some(::std::str::from_utf8(buf).unwrap()))
     }

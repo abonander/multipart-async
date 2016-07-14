@@ -156,7 +156,7 @@ impl BoundaryReader {
         self.boundary = boundary.into();
     }
 
-    pub fn try_read_line(&mut self, out: &mut String) -> Result<()> {
+    pub fn try_read_line(&mut self, out: &mut String) -> Result<usize> {
         let read = {
             let buf = self.find_boundary();
             let newline = if let Some(idx) = find_bytes(b"\r\n", buf) {
@@ -165,13 +165,13 @@ impl BoundaryReader {
                 return Err(ReadMore);
             };
 
-            (&buf[..newline + 2]).read_to_end(out)
+            (&buf[..newline + 2]).read_to_string(out)
                 .expect("Improperly formatted HTTP request")
         };
 
         self.consume(read);
 
-        Ok(())        
+        Ok(read)        
     }
 }
 
