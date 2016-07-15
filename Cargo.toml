@@ -38,3 +38,6 @@ version = "0.1"
 client = []
 default = ["hyper", "server", "client"]
 server = ["memchr"]
+
+[dev_dependencies]
+hyper = { git = "https://github.com/hyperium/hyper" }

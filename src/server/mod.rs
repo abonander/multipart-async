@@ -82,7 +82,7 @@ impl Multipart {
     /// ##Warning: Risk of Data Loss
     /// If the previously returned entry had contents of type `MultipartField::File`,
     /// calling this again will discard any unread contents of that entry.
-    pub fn next_field(&mut self) -> Result<Field> {
+    pub fn next_field(&mut self) -> Result<(&Field, FieldData)> {
         try!(self.consume_boundary());
 
         while !self.state.on_field() {
@@ -96,12 +96,20 @@ impl Multipart {
         Ok(self.get_field().unwrap())
     }
 
-    pub fn get_field(&mut self) -> Option<Field> {
-        if let State::Field(ref mut field) = self.state { 
-            Some(Field {
-                inner: field,
-                src: &mut self.reader
-            })
+    /* Lifetime errors for some reason
+    pub fn get_some_field(&mut self) -> Result<Field> {
+        match self.get_field() {
+            Some(field) => return Ok(field),
+            None => (),
+        }
+
+        self.next_field()
+    }
+    */
+
+    pub fn get_field(&mut self) -> Option<(&Field, FieldData)> {
+        if let State::Field(ref field) = self.state { 
+            Some((field, FieldData::new(field, &mut self.reader)))
         } else {
             None
         }
@@ -124,7 +132,7 @@ impl Multipart {
                 let cont_disp = mem::replace(cont_disp, ContentDisp::default()); 
                 let cont_type = ContentType::read_from(&buf);
 
-                State::Field(Field_::new(cont_disp, cont_type))
+                State::Field(Field::new(cont_disp, cont_type))
             },
             State::Field(_) => State::ContDisp,
             State::AtEnd => State::AtEnd,
@@ -156,7 +164,7 @@ impl Multipart {
 enum State {
     ContDisp,
     ContType(ContentDisp),
-    Field(Field_),
+    Field(Field),
     AtEnd
 }
 
@@ -275,7 +283,7 @@ fn valid_subslice(bytes: &[u8]) -> &str {
         .unwrap_or_else(|err| unsafe { ::std::str::from_utf8_unchecked(&bytes[..err.valid_up_to()]) })
 }
 
-struct Field_ {
+pub struct Field {
     name: String,
     cont_type: Option<Mime>,
     filename: Option<String>,
@@ -283,34 +291,45 @@ struct Field_ {
     boundary: Option<String>,
 }
 
-impl Field_ {
+impl Field {
     fn new(cont_disp: ContentDisp, cont_type: Option<ContentType>) -> Self {
         let (cont_type, boundary) = match cont_type {
             Some(ct) => (Some(ct.val), ct.boundary),
             None => (None, None),
         };
 
-        Field_ {
+        Field {
             name: cont_disp.field_name,
             cont_type: cont_type,
             filename: cont_disp.filename,
             boundary: boundary
         }
     }
+    
+    pub fn is_text(&self) -> bool {
+        self.cont_type.is_none()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn content_type(&self) -> Option<&Mime> {
+        self.cont_type.as_ref()
+    }
 }
 
-pub struct Field<'a> {
-    inner: &'a Field_,
+pub struct FieldData<'a> {
+    field: &'a Field,
     src: &'a mut BoundaryReader,
 }
 
-impl<'a> Field<'a> {
-    pub fn content_type(&self) -> Option<&Mime> {
-        self.inner.cont_type.as_ref()
-    }
-
-    pub fn is_text(&self) -> bool {
-        self.inner.cont_type.is_none()
+impl<'a> FieldData<'a> {
+    fn new(field: &'a Field, src: &'a mut BoundaryReader) -> Self {
+        FieldData {
+            field: field,
+            src: src,
+        }
     }
 
     pub fn available(&self) -> usize {
@@ -318,7 +337,7 @@ impl<'a> Field<'a> {
     }
 
     pub fn read_string(&mut self) -> Result<Option<&str>> {
-        if !self.is_text() { return Ok(None); }
+        if !self.field.is_text() { return Ok(None); }
         
         let _ = self.src.find_boundary();
 
@@ -330,7 +349,7 @@ impl<'a> Field<'a> {
     }
 
     pub fn read_string_partial(&mut self) -> Option<&str> {
-        if !self.is_text() { return None; }
+        if !self.field.is_text() { return None; }
 
         let buf = self.src.find_boundary();
 
@@ -338,7 +357,7 @@ impl<'a> Field<'a> {
     }
 
     pub fn read_adapter(&mut self) -> Option<ReadField> {
-        if self.is_text() { return None; }
+        if self.field.is_text() { return None; }
 
         Some(ReadField { src: &mut self.src })
     }
