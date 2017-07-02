@@ -11,7 +11,6 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
-extern crate url;
 
 use mime::Mime;
 
@@ -58,59 +57,22 @@ const RANDOM_FILENAME_LEN: usize = 12;
 /// The server-side implementation of `multipart/form-data` requests.
 ///
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
-pub struct Multipart {
-    reader: BoundaryFinder,
-    state: State, 
+pub struct Multipart<S> {
+    reader: BoundaryFinder<S>,
 }
 
-impl Multipart {
+impl<S> Multipart<S> {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
-    pub fn new<B: Into<String>>(boundary: B) -> Self {
+    pub fn new<B: Into<String>>(stream:S, boundary: B) -> Self {
         let boundary = prepend_str("--", boundary.into());
 
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            reader: BoundaryFinder::new(boundary),
-            state: State::ContDisp,
+            reader: BoundaryFinder::new(s, boundary),
         }
     }
-
-    pub fn read_from<R: Read>(&mut self, r: &mut R) -> io::Result<usize> {
-        self.reader.read_from(r)
-    }
-
-    /// Read the next entry from this multipart request, returning a struct with the field's name and
-    /// data. See `MultipartField` for more info.
-    ///
-    /// ##Warning: Risk of Data Loss
-    /// If the previously returned entry had contents of type `MultipartField::File`,
-    /// calling this again will discard any unread contents of that entry.
-    pub fn next_field(&mut self) -> Result<(&Field, FieldData)> {
-        try!(self.consume_boundary());
-
-        while !self.state.on_field() {
-            if self.state.at_end() {
-                return Err(AtEnd);
-            }
-
-            try!(self.next_state());
-        }
-
-        Ok(self.get_field().unwrap())
-    }
-
-    /* Lifetime errors for some reason
-    pub fn get_some_field(&mut self) -> Result<Field> {
-        match self.get_field() {
-            Some(field) => return Ok(field),
-            None => (),
-        }
-
-        self.next_field()
-    }
-    */
 
     pub fn get_field(&mut self) -> Option<(&Field, FieldData)> {
         if let State::Field(ref field) = self.state { 
@@ -166,40 +128,9 @@ impl Multipart {
     }
 }
 
-enum State {
-    ContDisp,
-    ContType(ContentDisp),
-    Field(Field),
-    AtEnd
-}
-
-impl State {
-    fn on_field(&self) -> bool {
-        match *self {
-            State::Field(_) => true,
-            _ => false,
-        }
-    }
-
-    fn at_end(&self) -> bool {
-        match *self {
-            State::AtEnd => true,
-            _ => false,
-        }
-    }
-}
-
-pub enum Error {
-    ReadMore,
-    AtEnd
-}
-
-pub type Result<T> = ::std::result::Result<T, Error>;
-
 struct ContentType {
     val: Mime,
-    #[allow(dead_code)]
-    boundary: Option<String>,
+
 }
 
 impl ContentType {
@@ -216,12 +147,11 @@ impl ContentType {
 
             Some(ContentType {
                 val: content_type,
-                boundary: boundary,
             })
         } else {
             get_remainder_after(CONTENT_TYPE, line).map(|cont_type| {
                 let content_type = read_content_type(cont_type.trim());
-                ContentType { val: content_type, boundary: None }
+                ContentType { val: content_type }
             })
         }
     }
