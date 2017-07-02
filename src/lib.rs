@@ -26,7 +26,7 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
 
-extern crate buf_redux;
+extern crate futures;
 
 extern crate mime;
 extern crate mime_guess;
@@ -84,8 +84,9 @@ macro_rules! try_opt (
     )
 );
 
-#[cfg(feature = "client")]
-pub mod client;
+// FIXME: after server prototype is working
+//#[cfg(feature = "client")]
+//pub mod client;
 
 #[cfg(feature = "server")]
 pub mod server;

@@ -11,6 +11,8 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
+extern crate url;
+
 use mime::Mime;
 
 use tempdir::TempDir;
@@ -22,7 +24,7 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::{fmt, io, mem, ptr};
 
-use self::boundary::BoundaryReader;
+use self::boundary::BoundaryFinder;
 use self::Error::*;
 
 macro_rules! try_opt (
@@ -48,13 +50,16 @@ mod boundary;
 #[cfg(feature = "hyper")]
 mod hyper;
 
+#[cfg(feature = "hyper")]
+pub use RequestHandler;
+
 const RANDOM_FILENAME_LEN: usize = 12;
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
 pub struct Multipart {
-    reader: BoundaryReader,
+    reader: BoundaryFinder,
     state: State, 
 }
 
@@ -67,7 +72,7 @@ impl Multipart {
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            reader: BoundaryReader::new(boundary),
+            reader: BoundaryFinder::new(boundary),
             state: State::ContDisp,
         }
     }
@@ -321,11 +326,11 @@ impl Field {
 
 pub struct FieldData<'a> {
     field: &'a Field,
-    src: &'a mut BoundaryReader,
+    src: &'a mut BoundaryFinder,
 }
 
 impl<'a> FieldData<'a> {
-    fn new(field: &'a Field, src: &'a mut BoundaryReader) -> Self {
+    fn new(field: &'a Field, src: &'a mut BoundaryFinder) -> Self {
         FieldData {
             field: field,
             src: src,
@@ -364,7 +369,7 @@ impl<'a> FieldData<'a> {
 }
 
 pub struct ReadField<'a> {
-    src: &'a mut BoundaryReader,
+    src: &'a mut BoundaryFinder,
 }
 
 impl<'a> Read for ReadField<'a> {
@@ -412,98 +417,7 @@ impl Entries {
     }
 }
 
-/// The save directory for `Entries`. May be temporary (delete-on-drop) or permanent.
-pub enum SaveDir {
-    /// This directory is temporary and will be deleted, along with its contents, when this wrapper
-    /// is dropped.
-    Temp(TempDir),
-    /// This directory is permanent and will be left on the filesystem when this wrapper is dropped.
-    Perm(PathBuf),
-}
 
-impl SaveDir {
-    /// Get the path of this directory, either temporary or permanent.
-    pub fn as_path(&self) -> &Path {
-        use self::SaveDir::*;
-        match *self {
-            Temp(ref tempdir) => tempdir.path(),
-            Perm(ref pathbuf) => &*pathbuf,
-        }
-    }
-
-    /// Returns `true` if this is a temporary directory which will be deleted on-drop.
-    pub fn is_temporary(&self) -> bool {
-        use self::SaveDir::*;
-        match *self {
-            Temp(_) => true,
-            Perm(_) => false,
-        }
-    }
-
-    /// Unwrap the `PathBuf` from `self`; if this is a temporary directory,
-    /// it will be converted to a permanent one.
-    pub fn into_path(self) -> PathBuf {
-        use self::SaveDir::*;
-
-        match self {
-            Temp(tempdir) => tempdir.into_path(),
-            Perm(pathbuf) => pathbuf,
-        }
-    }
-
-    /// If this `SaveDir` is temporary, convert it to permanent.
-    /// This is a no-op if it already is permanent.
-    ///
-    /// ###Warning: Potential Data Loss
-    /// Even though this will prevent deletion on-drop, the temporary folder on most OSes
-    /// (where this directory is created by default) can be automatically cleared by the OS at any
-    /// time, usually on reboot or when free space is low.
-    ///
-    /// It is recommended that you relocate the files from a request which you want to keep to a 
-    /// permanent folder on the filesystem.
-    pub fn keep(&mut self) {
-        use self::SaveDir::*;
-        *self = match mem::replace(self, Perm(PathBuf::new())) {
-            Temp(tempdir) => Perm(tempdir.into_path()),
-            old_self => old_self,
-        };
-    }
-
-    /// Delete this directory and its contents, regardless of its permanence.
-    ///
-    /// ###Warning: Potential Data Loss
-    /// This is very likely irreversible, depending on the OS implementation.
-    ///
-    /// Files deleted programmatically are deleted directly from disk, as compared to most file
-    /// manager applications which use a staging area from which deleted files can be safely
-    /// recovered (i.e. Windows' Recycle Bin, OS X's Trash Can, etc.).
-    pub fn delete(self) -> io::Result<()> {
-        use self::SaveDir::*;
-        match self {
-            Temp(tempdir) => tempdir.close(),
-            Perm(pathbuf) => fs::remove_dir_all(&pathbuf),
-        }
-    }
-}
-
-impl AsRef<Path> for SaveDir {
-    fn as_ref(&self) -> &Path {
-        self.as_path()
-    }
-}
-
-// grrr, no Debug impl for TempDir, can't derive
-// FIXME when tempdir > 0.3.4 is released (Debug PR landed 3/3/2016) 
-impl fmt::Debug for SaveDir {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::SaveDir::*;
-
-        match *self {
-            Temp(ref tempdir) => write!(f, "SaveDir::Temp({:?})", tempdir.path()),
-            Perm(ref path) => write!(f, "SaveDir::Perm({:?})", path),
-        }
-    }
-}
 
 /// A file saved to the local filesystem from a multipart request.
 #[derive(Debug)]
@@ -610,3 +524,54 @@ fn create_full_path(path: &Path) -> io::Result<File> {
 
     File::create(&path)
 }
+
+/// A wrapper around `Multipart` which conveniently handles body parsing and provides all fields
+/// in one convenient representation.
+pub struct EasyHandler<H> {
+    multi: Option<Multipart>,
+    entries: Entries,
+    handler: H
+}
+
+impl<H> EasyHandler<H> {
+    pub fn new(handler: H) -> io::Result<Self> {
+        let entries = try!(Entries::new_tempdir());
+
+        EasyHandler {
+            multi: None,
+            entries: entries,
+            handler: handler
+        }
+    }
+
+    pub fn new_tempdir_in<P: AsRef<Path>>(handler: H, path: P) -> io::Result<Self> {
+        let entries = try!(Entries::new_tempdir());
+
+        EasyHandler {
+            multi: None,
+            entries: entries,
+            handler: handler
+        }
+    }
+
+    pub fn new_permdir<P: Into<PathBuf>>(handler: H, permdir: P) -> io::Result<Self> {
+        let entries = try!(Entries::new_permdir(permdir));
+
+        EasyHandler {
+            multi: None,
+            entries: entries,
+            handler: handler,
+        }
+    }
+
+    fn set_boundary<B: Into<String>>(&mut self, boundary: B) {
+        self.multi = Some(Multipart::new(boundary));
+    }
+}
+
+pub trait RequestHandler {
+    type Response: Write;
+
+    fn on_request(entries: &Entries, response: &mut Self::Response) -> bool;
+}
+

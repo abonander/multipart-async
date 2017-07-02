@@ -1,10 +1,14 @@
 <component name="libraryTable">
   <library name="Rust &lt;multipart-async&gt;">
     <CLASSES>
-      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libstd" />
-      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libcore" />
-      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/libcollections" />
-      <root url="jar://C:/Rust src/rust-1.11.0-src.zip!/rust-bb4a79b087158f396b984bdf552d2c90890b12a3/src/liballoc" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libstd" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libcore" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/liballoc" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libcollections" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/liblibc/src" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libpanic_unwind" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libstd_unicode" />
+      <root url="file://$USER_HOME$/.rustup/toolchains/nightly-x86_64-pc-windows-msvc/lib/rustlib/src/rust/src/libtest" />
     </CLASSES>
     <JAVADOC />
     <SOURCES />

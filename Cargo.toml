@@ -17,27 +17,18 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 env_logger = "0.3"
+futures = "*"
 log = "0.3"
 mime = "0.2"
 mime_guess = "1.8"
 rand = "0.3"
 tempdir = "0.3"
 
-[dependencies.buf_redux]
-path = "../buf_redux"
-
-[dependencies.hyper]
-optional = true
-git = "https://github.com/hyperium/hyper"
-
-[dependencies.memchr]
-optional = true
-version = "0.1"
+hyper = { version = "0.11", optional = true }
+twoway = { version = "*", optional = true }
 
 [features]
 client = []
 default = ["hyper", "server", "client"]
-server = ["memchr"]
-
-[dev_dependencies]
-hyper = { git = "https://github.com/hyperium/hyper" }
+server = ["twoway"]
+sse4 = ["twoway/pcmp"]
