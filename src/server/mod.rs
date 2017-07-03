@@ -505,3 +505,27 @@ pub trait RequestHandler {
     fn on_request(entries: &Entries, response: &mut Self::Response) -> bool;
 }
 
+
+pub trait BodyChunk {
+    fn split_at(self, idx: usize) -> (Self, Self);
+
+    fn as_slice(&self) -> &[u8];
+
+    fn from_vec(vec: Vec<u8>) -> Self;
+
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        self.as_slice().to_owned()
+    }
+}
+
+pub trait BodyStream: Stream where Self::Item: BodyChunk, Self::Error: From<io::Error> {}
+
+impl<T> BodyStream for T where T: Stream, T::Item: BodyChunk, T::Error: From<io::Error> {}

@@ -9,71 +9,167 @@ extern crate twoway;
 use self::twoway;
 use self::memchr;
 
+use futures::{Async, Poll};
+
 use std::cmp;
 use std::borrow::Borrow;
 
 use std::io;
 use std::io::prelude::*;
 
-use super::{Result, Error};
-use super::Error::*;
+use super::{BodyChunk, BodyStream};
+
+pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
 #[derive(Debug)]
-pub struct BoundaryFinder<S: Stream> {
+pub struct BoundaryFinder<S: BodyStream> {
     stream: S,
-    state: BoundaryState<S::Item>,
-    boundary: Vec<u8>
+    state: State<S::Item>,
+    boundary: Box<[u8]>,
 }
 
-impl<S> BoundaryFinder<S> {
+impl<S: BodyStream> BoundaryFinder<S> {
     #[doc(hidden)]
     pub fn new<B: Into<Vec<u8>>>(stream: S, boundary: B) -> BoundaryFinder<S> {
         BoundaryFinder {
             stream: stream,
-            state: BoundaryState::Fresh,
-            boundary: boundary.into(),
+            state: State::Watching,
+            boundary: boundary.into().into_boxed_slice(),
         }
     }
 
-    pub fn find_boundary(&mut self) -> &[u8] {
+    pub fn body_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
+        use self::State::*;
 
-    }
+        macro_rules! try_ready_opt(
+            ($try:expr) => (
+                match $try {
+                    Ok(Async::Ready(Some(val))) => val,
+                    other => return other.into(),
+                }
+            );
+            ($try:expr; $restore:expr) => (
+                match $try {
+                    Ok(Async::Ready(Some(val))) => val,
+                    other => {
+                        self.state = $restore;
+                        return other.into();
+                    }
+                }
+            )
+        );
 
-
-    #[doc(hidden)]
-    pub fn consume_boundary(&mut self) -> Result<()> {
-        if self.at_end {
-            return Err(Error::AtEnd);
-        }
-
-        while !self.boundary_read {
-            let buf_len = self.find_boundary().len();
-
-            if buf_len == 0 {
-                return Err(Error::ReadMore);
+        loop {
+            match self.state {
+                Boundary(_) | End => return ready(None),
+                _ => ()
             }
 
-            self.buf.consume(buf_len);
+            match mem::replace(&mut self.state, Watching) {
+                Watching => {
+                    let chunk = try_ready_opt!(self.stream.poll());
+                    return self.check_chunk(chunk);
+                },
+                Remainder(rem) => self.check_chunk(rem),
+                Partial(mut partial) => {
+                    let chunk = try_ready_opt!(self.stream.poll(); Partial(partial));
+                    let needed_len = (self.boundary_size()).saturating_sub(partial.len());
+
+                    if chunk.len() >= needed_len {
+                        let (add, rem) = chunk.split_at(needed_len);
+                        partial.extend_from_slice(add.as_slice());
+
+                        if self.confirm_boundary(&partial) {
+                            self.state = BoundaryRem(partial, rem);
+                            return ready(None);
+                        } else {
+                            // This isn't the boundary we were looking for
+                            self.state = Remainder(rem);
+                            return ready(BodyChunk::from_vec(partial));
+                        }
+                    } else {
+                        // *rare*: chunk didn't have enough bytes to verify
+                        partial.extend_from_slice(chunk.as_slice());
+
+                        // wasn't our boundary
+                        if !self.boundary.starts_with(&partial) {
+                            self.state = Watching;
+                            return ready(BodyChunk::from_vec(partial));
+                        }
+
+                        self.state = Partial(partial);
+                    }
+
+                },
+
+            }
         }
+    }
 
-        self.buf.consume(self.search_idx + self.boundary.len());
+    fn check_chunk(&mut self, chunk: S::Item) -> PollOpt<S::Item, S::Error> {
+        if let Some(idx) = self.find_boundary(&chunk) {
 
-        self.search_idx = 0;
-        self.boundary_read = false;
- 
-        Ok(())
+            // Back up so we don't yield the CRLF before the boundary
+            let idx = idx.saturating_sub(2);
+
+            let (ret, rem) = chunk.split_at(idx);
+
+            self.state = if rem.len() < self.boundary_size() {
+                // Either partial boundary, or boundary but not the two bytes after it
+                Partial(rem)
+            } else {
+                Boundary(rem)
+            };
+
+            ready(ret)
+        } else {
+            ready(chunk)
+        }
+    }
+
+    fn find_boundary(&self, chunk: &S::Item) -> Option<usize> {
+        twoway::find_bytes(chunk.as_slice(), &self.boundary)
+            .or_else(|| partial_rmatch(chunk.as_slice(), &self.boundary))
+    }
+
+    fn confirm_boundary(&self, bytes: &[u8]) -> bool {
+        (bytes.len() >= 2 && bytes[2..].starts_with(&self.boundary))
+            || bytes.starts_with(self.boundary)
+    }
+
+    #[doc(hidden)]
+    pub fn consume_boundary(&mut self) -> Poll<bool, S::Error> {
+        while try_ready!(self.body_chunk()).is_some() {}
+
+
+    }
+
+    /// The necessary size to verify a boundary, including the potential CRLF before, and the
+    /// CRLF / "--" afterward
+    fn boundary_size(&self) -> usize {
+        self.boundary.len() + 4
     }
 }
 
-enum BoundaryState<B> {
-    /// Waiting for next boundary
+enum State<B> {
+    /// Watching for next boundary
     Watching,
-    Partial(B),
-    /// The second half after a partial boundary
-    AfterPartial(B),
-    Read,
-    End
+    /// Partial boundary, accumulating test bytes to the vector
+    Partial(Vec<u8>),
+    Boundary(B),
+    BoundaryRem(Vec<u8>, B),
+    /// The remains of a chunk after processing
+    Remainder(B),
+    End,
+}
+
+fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
+    Ok(Async::Ready(val.into()))
+}
+
+fn not_ready<T, E>() -> Poll<T, E> {
+    Ok(Async::NotReady)
 }
 
 /// Check if `needle` is cut off at the end of `haystack`, and if so, its index
