@@ -1,13 +1,10 @@
-// Copyright 2016 `multipart` Crate Developers
+// Copyright 2017 `multipart-async` Crate Developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 extern crate twoway;
-
-use self::twoway;
-use self::memchr;
 
 use futures::{Async, Poll};
 
@@ -17,7 +14,11 @@ use std::borrow::Borrow;
 use std::io;
 use std::io::prelude::*;
 
+use std::mem;
+
 use super::{BodyChunk, BodyStream};
+
+use self::State::*;
 
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
@@ -40,8 +41,6 @@ impl<S: BodyStream> BoundaryFinder<S> {
     }
 
     pub fn body_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
-        use self::State::*;
-
         macro_rules! try_ready_opt(
             ($try:expr) => (
                 match $try {
@@ -62,7 +61,7 @@ impl<S: BodyStream> BoundaryFinder<S> {
 
         loop {
             match self.state {
-                Boundary(_) | End => return ready(None),
+                Boundary(_) | BoundaryRem(_, _) | End => return ready(None),
                 _ => ()
             }
 
@@ -71,7 +70,7 @@ impl<S: BodyStream> BoundaryFinder<S> {
                     let chunk = try_ready_opt!(self.stream.poll());
                     return self.check_chunk(chunk);
                 },
-                Remainder(rem) => self.check_chunk(rem),
+                Remainder(rem) => return self.check_chunk(rem),
                 Partial(mut partial) => {
                     let chunk = try_ready_opt!(self.stream.poll(); Partial(partial));
                     let needed_len = (self.boundary_size()).saturating_sub(partial.len());
@@ -88,28 +87,27 @@ impl<S: BodyStream> BoundaryFinder<S> {
                             self.state = Remainder(rem);
                             return ready(BodyChunk::from_vec(partial));
                         }
-                    } else {
-                        // *rare*: chunk didn't have enough bytes to verify
-                        partial.extend_from_slice(chunk.as_slice());
-
-                        // wasn't our boundary
-                        if !self.boundary.starts_with(&partial) {
-                            self.state = Watching;
-                            return ready(BodyChunk::from_vec(partial));
-                        }
-
-                        self.state = Partial(partial);
                     }
 
-                },
+                    // *rare*: chunk didn't have enough bytes to verify
+                    partial.extend_from_slice(chunk.as_slice());
 
+                    if !self.boundary.starts_with(&partial) {
+                        // wasn't our boundary
+                        self.state = Watching;
+                        return ready(BodyChunk::from_vec(partial));
+                    }
+
+                    // wait for next chunk
+                    self.state = Partial(partial);
+                },
+                _ => unreachable!("invalid state"),
             }
         }
     }
 
     fn check_chunk(&mut self, chunk: S::Item) -> PollOpt<S::Item, S::Error> {
         if let Some(idx) = self.find_boundary(&chunk) {
-
             // Back up so we don't yield the CRLF before the boundary
             let idx = idx.saturating_sub(2);
 
@@ -131,6 +129,11 @@ impl<S: BodyStream> BoundaryFinder<S> {
     fn find_boundary(&self, chunk: &S::Item) -> Option<usize> {
         twoway::find_bytes(chunk.as_slice(), &self.boundary)
             .or_else(|| partial_rmatch(chunk.as_slice(), &self.boundary))
+    }
+
+    fn maybe_boundary(&self, bytes: &[u8]) -> bool {
+        (bytes.len() >= 2 && self.boundary.starts_with(&bytes[2..]))
+            || self.boundary.starts_with(bytes)
     }
 
     fn confirm_boundary(&self, bytes: &[u8]) -> bool {

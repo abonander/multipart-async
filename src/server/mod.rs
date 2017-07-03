@@ -1,4 +1,4 @@
-// Copyright 2016 `multipart` Crate Developers
+// Copyright 2017 `multipart-async` Crate Developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -12,6 +12,8 @@
 //!
 //! See the `Multipart` struct for more info.
 
+use futures::Stream;
+
 use mime::Mime;
 
 use tempdir::TempDir;
@@ -24,7 +26,6 @@ use std::path::{Path, PathBuf};
 use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryFinder;
-use self::Error::*;
 
 macro_rules! try_opt (
     ($expr:expr) => (
@@ -35,22 +36,13 @@ macro_rules! try_opt (
     )
 );
 
-macro_rules! try_opt_readmore (
-    ($expr:expr) => (
-        match $expr {
-            Some(val) => val,
-            None => return Err(ReadMore),
-        }
-    )
-);
 
 mod boundary;
 
-#[cfg(feature = "hyper")]
-mod hyper;
+// FIXME: hyper integration once API is in place
+// #[cfg(feature = "hyper")]
+// mod hyper;
 
-#[cfg(feature = "hyper")]
-pub use RequestHandler;
 
 const RANDOM_FILENAME_LEN: usize = 12;
 
@@ -64,68 +56,17 @@ pub struct Multipart<S> {
 impl<S> Multipart<S> {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
-    pub fn new<B: Into<String>>(stream:S, boundary: B) -> Self {
+    pub fn new<B: Into<String>>(stream: S, boundary: B) -> Self {
         let boundary = prepend_str("--", boundary.into());
 
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            reader: BoundaryFinder::new(s, boundary),
+            reader: BoundaryFinder::new(stream, boundary),
         }
     }
 
-    pub fn get_field(&mut self) -> Option<(&Field, FieldData)> {
-        if let State::Field(ref field) = self.state { 
-            Some((field, FieldData::new(field, &mut self.reader)))
-        } else {
-            None
-        }
-    }
 
-    fn next_state(&mut self) -> Result<()> {
-        self.state = match self.state {
-            State::ContDisp => {
-                let mut buf = String::new();
-                let _ = try!(self.reader.try_read_line(&mut buf));
-                
-                let cont_disp = try_opt_readmore!(ContentDisp::read_from(&buf));
-                
-                State::ContType(cont_disp)
-            },
-            State::ContType(ref mut cont_disp) => {
-                let mut buf = String::new();
-                let _ = try!(self.reader.try_read_line(&mut buf));
-
-                let cont_disp = mem::replace(cont_disp, ContentDisp::default()); 
-                let cont_type = ContentType::read_from(&buf);
-
-                State::Field(Field::new(cont_disp, cont_type))
-            },
-            State::Field(_) => State::ContDisp,
-            State::AtEnd => State::AtEnd,
-        };
-
-        Ok(())
-    } 
-
-    fn consume_boundary(&mut self) -> Result<bool> {
-        try!(self.reader.consume_boundary());
-
-        let mut out = [0; 2];
-        let _ = self.reader.read(&mut out);
-
-        if *b"\r\n" == out {
-            Ok(true)
-        } else {
-            if *b"--" != out {
-                warn!("Unexpected 2-bytes after boundary: {:?}", out);
-            }
-
-            self.state = State::AtEnd;
-
-            Ok(false)
-        }
-    }
 }
 
 struct ContentType {
@@ -218,295 +159,8 @@ fn valid_subslice(bytes: &[u8]) -> &str {
         .unwrap_or_else(|err| unsafe { ::std::str::from_utf8_unchecked(&bytes[..err.valid_up_to()]) })
 }
 
-pub struct Field {
-    name: String,
-    cont_type: Option<Mime>,
-    filename: Option<String>,
-    #[allow(dead_code)]
-    boundary: Option<String>,
-}
 
-impl Field {
-    fn new(cont_disp: ContentDisp, cont_type: Option<ContentType>) -> Self {
-        let (cont_type, boundary) = match cont_type {
-            Some(ct) => (Some(ct.val), ct.boundary),
-            None => (None, None),
-        };
-
-        Field {
-            name: cont_disp.field_name,
-            cont_type: cont_type,
-            filename: cont_disp.filename,
-            boundary: boundary
-        }
-    }
-    
-    pub fn is_text(&self) -> bool {
-        self.cont_type.is_none()
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn content_type(&self) -> Option<&Mime> {
-        self.cont_type.as_ref()
-    }
-}
-
-pub struct FieldData<'a> {
-    field: &'a Field,
-    src: &'a mut BoundaryFinder,
-}
-
-impl<'a> FieldData<'a> {
-    fn new(field: &'a Field, src: &'a mut BoundaryFinder) -> Self {
-        FieldData {
-            field: field,
-            src: src,
-        }
-    }
-
-    pub fn available(&self) -> usize {
-        self.src.available()    
-    }
-
-    pub fn read_string(&mut self) -> Result<Option<&str>> {
-        if !self.field.is_text() { return Ok(None); }
-        
-        let _ = self.src.find_boundary();
-
-        if !self.src.boundary_read() { return Err(ReadMore); }
-
-        let buf = self.src.find_boundary();
-
-        Ok(Some(::std::str::from_utf8(buf).unwrap()))
-    }
-
-    pub fn read_string_partial(&mut self) -> Option<&str> {
-        if !self.field.is_text() { return None; }
-
-        let buf = self.src.find_boundary();
-
-        Some(valid_subslice(buf))
-    }
-
-    pub fn read_adapter(&mut self) -> Option<ReadField> {
-        if self.field.is_text() { return None; }
-
-        Some(ReadField { src: &mut self.src })
-    }
-}
-
-pub struct ReadField<'a> {
-    src: &'a mut BoundaryFinder,
-}
-
-impl<'a> Read for ReadField<'a> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        self.src.read(out)
-    }
-}
-
-impl<'a> BufRead for ReadField<'a> {
-    fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.src.fill_buf()
-    }
-
-    fn consume(&mut self, amt: usize) {
-        self.src.consume(amt)
-    }
-}
-
-/// A result of `Multipart::save_all()`.
-#[derive(Debug)]
-pub struct Entries {
-    /// The text fields of the multipart request, mapped by field name -> value.
-    pub fields: HashMap<String, String>,
-    /// A map of file field names to their contents saved on the filesystem.
-    pub files: HashMap<String, SavedFile>,
-    /// The directory the files in this request were saved under; may be temporary or permanent.
-    pub dir: SaveDir,
-}
-
-impl Entries {
-    fn new_tempdir_in<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        TempDir::new_in(path, "multipart").map(Self::with_tempdir)
-    }
-
-    fn new_tempdir() -> io::Result<Self> {
-        TempDir::new("multipart").map(Self::with_tempdir)
-    }
-
-    fn with_tempdir(tempdir: TempDir) -> Entries {
-        Entries {
-            fields: HashMap::new(),
-            files: HashMap::new(),
-            dir: SaveDir::Temp(tempdir),
-        }
-    }
-}
-
-
-
-/// A file saved to the local filesystem from a multipart request.
-#[derive(Debug)]
-pub struct SavedFile {
-    /// The complete path this file was saved at.
-    pub path: PathBuf,
-
-    /// The original filename of this file, if one was provided in the request.
-    ///
-    /// ##Warning
-    /// You should treat this value as untrustworthy because it is an arbitrary string provided by
-    /// the client. You should *not* blindly append it to a directory path and save the file there, 
-    /// as such behavior could easily be exploited by a malicious client.
-    pub filename: Option<String>,
-
-    /// The number of bytes written to the disk; may be truncated.
-    pub size: u64,
-}
-
-/// The result of [`Multipart::save_all()`](struct.multipart.html#method.save_all).
-#[derive(Debug)]
-pub enum SaveResult {
-    /// The operation was a total success. Contained are all entries of the request.
-    Full(Entries),
-    /// The operation errored partway through. Contained are the entries gathered thus far,
-    /// as well as the error that ended the process.
-    Partial(Entries, io::Error),
-    /// The `TempDir` for `Entries` could not be constructed. Contained is the error detailing the
-    /// problem.
-    Error(io::Error),
-}
-
-impl SaveResult {
-    /// Take the `Entries` from `self`, if applicable, and discarding
-    /// the error, if any.
-    pub fn to_entries(self) -> Option<Entries> {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) | Partial(entries, _) => Some(entries),
-            Error(_) => None,
-        }
-    }
-
-    /// Decompose `self` to `(Option<Entries>, Option<io::Error>)`
-    pub fn to_opt(self) -> (Option<Entries>, Option<io::Error>) {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) => (Some(entries), None),
-            Partial(entries, error) => (Some(entries), Some(error)),
-            Error(error) => (None, Some(error)),
-        }
-    }
-
-    /// Map `self` to an `io::Result`, discarding the error in the `Partial` case.
-    pub fn to_result(self) -> io::Result<Entries> {
-        use self::SaveResult::*;
-
-        match self {
-            Full(entries) | Partial(entries, _) => Ok(entries),
-            Error(error) => Err(error),
-        }
-    }
-}
-
-fn retry_on_interrupt<F, T>(mut do_fn: F) -> io::Result<T> where F: FnMut() -> io::Result<T> {
-    loop {
-        match do_fn() {
-            Ok(val) => return Ok(val),
-            Err(err) => if err.kind() != io::ErrorKind::Interrupted { 
-                return Err(err);
-            },
-        }
-    }
-} 
-
-fn prepend_str(prefix: &str, mut string: String) -> String {
-    string.reserve(prefix.len());
-
-    unsafe {
-        let bytes = string.as_mut_vec();
-
-        // This addition is safe because it was already done in `String::reserve()`
-        // which would have panicked if it overflowed.
-        let old_len = bytes.len();
-        let new_len = bytes.len() + prefix.len();
-        bytes.set_len(new_len);
-
-        ptr::copy(bytes.as_ptr(), bytes[prefix.len()..].as_mut_ptr(), old_len);
-        ptr::copy(prefix.as_ptr(), bytes.as_mut_ptr(), prefix.len());
-    }
-
-    string
-}
-
-fn create_full_path(path: &Path) -> io::Result<File> {
-    if let Some(parent) = path.parent() {
-        try!(fs::create_dir_all(parent));
-    } else {
-        // RFC: return an error instead?
-        warn!("Attempting to save file in what looks like a root directory. File path: {:?}", path);
-    }
-
-    File::create(&path)
-}
-
-/// A wrapper around `Multipart` which conveniently handles body parsing and provides all fields
-/// in one convenient representation.
-pub struct EasyHandler<H> {
-    multi: Option<Multipart>,
-    entries: Entries,
-    handler: H
-}
-
-impl<H> EasyHandler<H> {
-    pub fn new(handler: H) -> io::Result<Self> {
-        let entries = try!(Entries::new_tempdir());
-
-        EasyHandler {
-            multi: None,
-            entries: entries,
-            handler: handler
-        }
-    }
-
-    pub fn new_tempdir_in<P: AsRef<Path>>(handler: H, path: P) -> io::Result<Self> {
-        let entries = try!(Entries::new_tempdir());
-
-        EasyHandler {
-            multi: None,
-            entries: entries,
-            handler: handler
-        }
-    }
-
-    pub fn new_permdir<P: Into<PathBuf>>(handler: H, permdir: P) -> io::Result<Self> {
-        let entries = try!(Entries::new_permdir(permdir));
-
-        EasyHandler {
-            multi: None,
-            entries: entries,
-            handler: handler,
-        }
-    }
-
-    fn set_boundary<B: Into<String>>(&mut self, boundary: B) {
-        self.multi = Some(Multipart::new(boundary));
-    }
-}
-
-pub trait RequestHandler {
-    type Response: Write;
-
-    fn on_request(entries: &Entries, response: &mut Self::Response) -> bool;
-}
-
-
-pub trait BodyChunk {
+pub trait BodyChunk: Sized {
     fn split_at(self, idx: usize) -> (Self, Self);
 
     fn as_slice(&self) -> &[u8];
