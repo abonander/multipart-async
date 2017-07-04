@@ -6,32 +6,29 @@
 // copied, modified, or distributed except according to those terms.
 extern crate twoway;
 
-use futures::{Async, Poll};
+use futures::{Async, Poll, Stream};
 
 use std::cmp;
 use std::borrow::Borrow;
-
+use std::error::Error;
 use std::io;
-use std::io::prelude::*;
-
 use std::mem;
 
-use super::{BodyChunk, BodyStream};
+use super::BodyChunk;
 
 use self::State::*;
 
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
-#[derive(Debug)]
-pub struct BoundaryFinder<S: BodyStream> {
+// #[derive(Debug)]
+pub struct BoundaryFinder<S: Stream> {
     stream: S,
     state: State<S::Item>,
     boundary: Box<[u8]>,
 }
 
-impl<S: BodyStream> BoundaryFinder<S> {
-    #[doc(hidden)]
+impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
     pub fn new<B: Into<Vec<u8>>>(stream: S, boundary: B) -> BoundaryFinder<S> {
         BoundaryFinder {
             stream: stream,
@@ -85,7 +82,7 @@ impl<S: BodyStream> BoundaryFinder<S> {
                         } else {
                             // This isn't the boundary we were looking for
                             self.state = Remainder(rem);
-                            return ready(BodyChunk::from_vec(partial));
+                            return ready(body_chunk::<S>(partial));
                         }
                     }
 
@@ -95,7 +92,7 @@ impl<S: BodyStream> BoundaryFinder<S> {
                     if !self.boundary.starts_with(&partial) {
                         // wasn't our boundary
                         self.state = Watching;
-                        return ready(BodyChunk::from_vec(partial));
+                        return ready(body_chunk::<S>(partial));
                     }
 
                     // wait for next chunk
@@ -115,7 +112,7 @@ impl<S: BodyStream> BoundaryFinder<S> {
 
             self.state = if rem.len() < self.boundary_size() {
                 // Either partial boundary, or boundary but not the two bytes after it
-                Partial(rem)
+                Partial(rem.into_vec())
             } else {
                 Boundary(rem)
             };
@@ -138,14 +135,35 @@ impl<S: BodyStream> BoundaryFinder<S> {
 
     fn confirm_boundary(&self, bytes: &[u8]) -> bool {
         (bytes.len() >= 2 && bytes[2..].starts_with(&self.boundary))
-            || bytes.starts_with(self.boundary)
+            || bytes.starts_with(&self.boundary)
     }
 
     #[doc(hidden)]
     pub fn consume_boundary(&mut self) -> Poll<bool, S::Error> {
         while try_ready!(self.body_chunk()).is_some() {}
 
+        let boundary = match mem::replace(&mut self.state, Watching) {
+            Boundary(boundary) => boundary.into_vec(),
+            BoundaryRem(boundary, rem) => {
+                self.state = Remainder(rem);
+                boundary
+            },
+            _ => unreachable!("invalid state"),
+        };
 
+        let len = boundary.len();
+
+        if len <= self.boundary_size() {
+            return error(format!("boundary sequence too short: {}", String::from_utf8_lossy(&boundary)));
+        }
+
+        let is_end = boundary.ends_with(b"--");
+
+        if !is_end && !boundary.ends_with(b"\r\n") {
+            error!("unexpected bytes after boundary: {:?}", &boundary[len - 2 ..]);
+        }
+
+        ready(is_end)
     }
 
     /// The necessary size to verify a boundary, including the potential CRLF before, and the
@@ -167,12 +185,20 @@ enum State<B> {
     End,
 }
 
+fn body_chunk<S: Stream>(vec: Vec<u8>) -> S::Item where S::Item: BodyChunk {
+    BodyChunk::from_vec(vec)
+}
+
 fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
     Ok(Async::Ready(val.into()))
 }
 
 fn not_ready<T, E>() -> Poll<T, E> {
     Ok(Async::NotReady)
+}
+
+fn error<T, E: Into<Box<Error + Send + Sync>>, E_: From<io::Error>>(e: E) -> Poll<T, E_> {
+    Err(io::Error::new(io::ErrorKind::Other, e).into())
 }
 
 /// Check if `needle` is cut off at the end of `haystack`, and if so, its index
@@ -185,7 +211,7 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let idx = try_opt!(twoway::find_bytes(&haystack[trim_start..], &needle[..1])) + trim_start;
 
     // If the rest of `haystack` matches `needle`, then we have our partial match
-    if haystack[idx..].iter().zip(needle).all(|l, r| l == r) {
+    if haystack[idx..].iter().zip(needle).all(|(l, r)| l == r) {
         Some(idx)
     } else {
         None
@@ -196,16 +222,40 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod test {
     use super::BoundaryFinder;
 
+    use futures::{Future, Stream};
+    use futures::Async::*;
+
     use std::io;
     use std::io::prelude::*;
 
-    const BOUNDARY: &'static str = "\r\n--boundary";
-    const TEST_VAL: &'static str = "\r\n--boundary\r
-dashed-value-1\r
---boundary\r
-dashed-value-2\r
---boundary--"; 
-        
+    const BOUNDARY: &'static str = "--boundary";
+
+    struct MockStream<'s> {
+        stream: &'s mut [(&'static [u8], usize)],
+    }
+
+    fn assert_stream_eq<S1: Stream, S2: Stream<Error = S1::Error>>(mut left: S1, mut right: S2) where S1::Item: PartialEq<S2::Item> {
+        loop {
+            let left_item = loop {
+                match left.poll().expect("Error from left stream") {
+                    Ready(item) => break item,
+                    _ => (),
+                }
+            };
+
+            let right_item = loop {
+                match right.poll().expect("Error from right stream") {
+                    Ready(item) => break item,
+                    _ => (),
+                }
+            };
+
+            if left_item.is_none() && right_item.is_none() { return; }
+
+            assert_eq!(left_item, right_item);
+        }
+    }
+
     #[test]
     fn test_boundary() {
         let _ = ::env_logger::init();        
