@@ -58,7 +58,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
         loop {
             match self.state {
-                Boundary(_) | BoundaryRem(_, _) | End => return ready(None),
+                Boundary(_, _) | BoundaryVec(_, _) | End => return ready(None),
                 _ => ()
             }
 
@@ -77,7 +77,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
                         partial.extend_from_slice(add.as_slice());
 
                         if self.confirm_boundary(&partial) {
-                            self.state = BoundaryRem(partial, rem);
+                            self.state = BoundaryVec(partial, rem);
                             return ready(None);
                         } else {
                             // This isn't the boundary we were looking for
@@ -105,19 +105,25 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
     fn check_chunk(&mut self, chunk: S::Item) -> PollOpt<S::Item, S::Error> {
         if let Some(idx) = self.find_boundary(&chunk) {
-            // Back up so we don't yield the CRLF before the boundary
-            let idx = idx.saturating_sub(2);
+            let (idx, len) = if idx < 2 {
+                // If there's not enough bytes before the boundary, don't back up
+                (idx, self.boundary.len() + 2)
+            } else {
+                (idx - 2, self.boundary_size())
+            };
 
             let (ret, rem) = chunk.split_at(idx);
 
-            self.state = if rem.len() < self.boundary_size() {
+            self.state = if rem.len() < len {
                 // Either partial boundary, or boundary but not the two bytes after it
                 Partial(rem.into_vec())
             } else {
-                Boundary(rem)
+                let (bnd, rem) = rem.split_at(len);
+
+                Boundary(bnd, rem)
             };
 
-            ready(ret)
+            if !ret.is_empty() { ready(ret) } else { ready (None) }
         } else {
             ready(chunk)
         }
@@ -138,23 +144,25 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
             || bytes.starts_with(&self.boundary)
     }
 
-    #[doc(hidden)]
     pub fn consume_boundary(&mut self) -> Poll<bool, S::Error> {
         while try_ready!(self.body_chunk()).is_some() {}
 
-        let boundary = match mem::replace(&mut self.state, Watching) {
-            Boundary(boundary) => boundary.into_vec(),
-            BoundaryRem(boundary, rem) => {
-                self.state = Remainder(rem);
-                boundary
-            },
+        match mem::replace(&mut self.state, Watching) {
+            Boundary(bnd, rem) => self.check_boundary(bnd.as_slice(), rem),
+            BoundaryVec(bnd, rem) => self.check_boundary(&bnd, rem),
             _ => unreachable!("invalid state"),
-        };
+        }
+    }
+
+    fn check_boundary(&mut self, boundary: &[u8], rem: S::Item) -> Poll<bool, S::Error> {
+        self.state = Remainder(rem);
+
+        trace!("Boundary found: {}", String::from_utf8_lossy(boundary));
 
         let len = boundary.len();
 
         if len <= self.boundary_size() {
-            return error(format!("boundary sequence too short: {}", String::from_utf8_lossy(&boundary)));
+            return error(format!("boundary sequence too short: {}", String::from_utf8_lossy(boundary)));
         }
 
         let is_end = boundary.ends_with(b"--");
@@ -173,13 +181,22 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
     }
 }
 
+impl<S: Stream> Stream for BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
+    type Item = S::Item;
+    type Error = S::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.body_chunk()
+    }
+}
+
 enum State<B> {
     /// Watching for next boundary
     Watching,
     /// Partial boundary, accumulating test bytes to the vector
     Partial(Vec<u8>),
-    Boundary(B),
-    BoundaryRem(Vec<u8>, B),
+    Boundary(B, B),
+    BoundaryVec(Vec<u8>, B),
     /// The remains of a chunk after processing
     Remainder(B),
     End,
@@ -220,130 +237,123 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use super::BoundaryFinder;
+    use super::{BoundaryFinder, ready, not_ready};
 
-    use futures::{Future, Stream};
+    use server::BodyChunk;
+
+    use futures::{Future, Stream, Poll};
     use futures::Async::*;
 
+    use std::fmt::Debug;
     use std::io;
     use std::io::prelude::*;
 
     const BOUNDARY: &'static str = "--boundary";
 
-    struct MockStream<'s> {
-        stream: &'s mut [(&'static [u8], usize)],
+    struct MockStream {
+        stream: Vec<(&'static [u8], usize)>,
+        curr: usize,
     }
 
-    fn assert_stream_eq<S1: Stream, S2: Stream<Error = S1::Error>>(mut left: S1, mut right: S2) where S1::Item: PartialEq<S2::Item> {
+    impl MockStream {
+        fn new(stream: Vec<(&'static [u8], usize)>) -> Self {
+            MockStream {
+                stream: stream,
+                curr: 0,
+            }
+        }
+    }
+
+    impl Stream for MockStream {
+        type Item = Vec<u8>;
+        type Error = io::Error;
+
+        fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+            let curr = self.curr;
+
+            if curr >= self.stream.len() {
+                return ready(None);
+            }
+
+            if self.stream[curr].1 > 0 {
+                self.stream[curr].1 -= 1;
+                return not_ready();
+            }
+
+            self.curr += 1;
+
+            ready(self.stream[curr].0.to_owned())
+        }
+    }
+
+    macro_rules! mock_finder (
+        ($($input:tt)*) => (
+            BoundaryFinder::new(mock!($($input)*), BOUNDARY)
+        );
+    );
+
+    macro_rules! mock (
+        ($($item:expr $(,$wait:expr)*);*) => (
+            MockStream::new(vec![$(mock_item!($item $(, $wait)*)),*])
+        )
+    );
+
+    macro_rules! mock_item (
+        ($item:expr) => (($item, 0));
+        ($item:expr, $($wait:expr)*) => (($item, $($wait)*));
+    );
+
+    fn assert_stream_eq<S: Stream, T>(mut left: S, right: &[T]) where S::Item: PartialEq<T>, S::Error: Debug, S::Item: Debug, T: Debug{
+        let mut right = right.iter();
+
         loop {
             let left_item = loop {
-                match left.poll().expect("Error from left stream") {
+                match left.poll().expect("Error from stream") {
                     Ready(item) => break item,
                     _ => (),
                 }
             };
 
-            let right_item = loop {
-                match right.poll().expect("Error from right stream") {
-                    Ready(item) => break item,
-                    _ => (),
-                }
-            };
+            let right_item = right.next();
 
-            if left_item.is_none() && right_item.is_none() { return; }
-
-            assert_eq!(left_item, right_item);
-        }
-    }
-
-    #[test]
-    fn test_boundary() {
-        let _ = ::env_logger::init();        
-        debug!("Testing boundary (no split)");
-
-        let src = &mut TEST_VAL.as_bytes();
-        let reader = BoundaryFinder::from_reader(src, BOUNDARY);
-        
-        test_boundary_reader(reader);        
-    }
-
-    struct SplitReader<'a> {
-        left: &'a [u8],
-        right: &'a [u8],
-    }
-
-    impl<'a> SplitReader<'a> {
-        fn split(data: &'a [u8], at: usize) -> SplitReader<'a> {
-            let (left, right) = data.split_at(at);
-
-            SplitReader { 
-                left: left,
-                right: right,
+            match (left_item, right_item) {
+                (Some(ref left), Some(ref right)) if left == *right => (),
+                (None, None) => (),
+                (left, right) => panic!("Failed assertion: `{:?} == {:?}`", left, right),
             }
         }
     }
 
-    impl<'a> Read for SplitReader<'a> {
-        fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
-            fn copy_bytes_partial(src: &mut &[u8], dst: &mut [u8]) -> usize {
-                src.read(dst).unwrap()
+    fn assert_boundary<S: Stream<Item = Vec<u8>>>(finder: &mut BoundaryFinder<S>, is_end: bool) where S::Error: From<io::Error> + Debug {
+        loop {
+            match finder.body_chunk().expect("Error from BoundaryFinder") {
+                Ready(Some(chunk)) => panic!("Unexpected chunk from BoundaryFinder: {}", String::from_utf8_lossy(chunk.as_slice())),
+                Ready(None) => break,
+                _ => (),
             }
+        }
 
-            let mut copy_amt = copy_bytes_partial(&mut self.left, dst);
-
-            if copy_amt == 0 {
-                copy_amt = copy_bytes_partial(&mut self.right, dst)
-            };
-
-            Ok(copy_amt)
+        loop {
+            match finder.consume_boundary().expect("Error from BoundaryFinder") {
+                Ready(val) => assert_eq!(val, is_end, "Found wrong kind of boundary"),
+                _ => (),
+            }
         }
     }
 
     #[test]
-    fn test_split_boundary() {
-        let _ = ::env_logger::init();        
-        debug!("Testing boundary (split)");
-        
-        // Substitute for `.step_by()` being unstable.
-        for split_at in (0 .. TEST_VAL.len()).filter(|x| x % 2 != 0) {
-            debug!("Testing split at: {}", split_at);
+    fn simple_test() {
+        let _ = ::env_logger::init();
 
-            let src = SplitReader::split(TEST_VAL.as_bytes(), split_at);
-            let reader = BoundaryFinder::from_reader(src, BOUNDARY);
-            test_boundary_reader(reader);
-        }
+        let mut finder = mock_finder! (
+            b"--boundary\r\n\
+            asdf1234\r\n\
+            --boundary--"
+        );
 
-    }
-
-    fn test_boundary_reader<R: Read>(mut reader: BoundaryFinder<R>) {
-        let ref mut buf = String::new();    
-
-        debug!("Read 1");
-        let _ = reader.read_to_string(buf).unwrap();
-        assert!(buf.is_empty(), "Buffer not empty: {:?}", buf);
-        buf.clear();
-
-        debug!("Consume 1");
-        reader.consume_boundary().unwrap();
-
-        debug!("Read 2");
-        let _ = reader.read_to_string(buf).unwrap();
-        assert_eq!(buf, "\r\ndashed-value-1");
-        buf.clear();
-
-        debug!("Consume 2");
-        reader.consume_boundary().unwrap();
-
-        debug!("Read 3");
-        let _ = reader.read_to_string(buf).unwrap();
-        assert_eq!(buf, "\r\ndashed-value-2");
-        buf.clear();
-
-        debug!("Consume 3");
-        reader.consume_boundary().unwrap();
-
-        debug!("Read 4");
-        let _ = reader.read_to_string(buf).unwrap();
-        assert_eq!(buf, "--");
+        assert_boundary(&mut finder, false);
+        assert_stream_eq(&mut finder, &[b"asdf1234"]);
+        assert_boundary(&mut finder, true);
     }
 }
+

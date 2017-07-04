@@ -40,41 +40,6 @@ extern crate hyper;
 
 use rand::Rng;
 
-/// Chain a series of results together, with or without previous results.
-///
-/// ```
-/// #[macro_use] extern crate multipart;
-///
-/// fn try_add_one(val: u32) -> Result<u32, u32> {
-///     if val < 5 {
-///         Ok(val + 1)
-///     } else {
-///         Err(val)
-///     }
-/// }
-/// 
-/// fn main() {
-///     let res = chain_result! {
-///         try_add_one(1),
-///         prev -> try_add_one(prev),
-///         prev -> try_add_one(prev),
-///         prev -> try_add_one(prev)
-///     };
-///
-///     println!("{:?}", res);
-/// }
-///
-/// ```
-#[macro_export]
-macro_rules! chain_result {
-    ($first_expr:expr, $($try_expr:expr),*) => (
-        $first_expr $(.and_then(|_| $try_expr))*
-    );
-    ($first_expr:expr, $($($arg:ident),+ -> $try_expr:expr),*) => (
-        $first_expr $(.and_then(|$($arg),+| $try_expr))*
-    );
-}
-
 #[macro_export]
 macro_rules! try_opt (
     ($expr:expr) => (
