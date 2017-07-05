@@ -73,18 +73,12 @@ pub trait BodyChunk: Sized {
 
     fn as_slice(&self) -> &[u8];
 
-    fn from_vec(vec: Vec<u8>) -> Self;
-
     fn len(&self) -> usize {
         self.as_slice().len()
     }
 
     fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
-    }
-
-    fn into_vec(self) -> Vec<u8> {
-        self.as_slice().to_owned()
     }
 }
 
@@ -97,8 +91,14 @@ impl BodyChunk for Vec<u8> {
     fn as_slice(&self) -> &[u8] {
         self
     }
+}
 
-    fn from_vec(vec: Vec<u8>) -> Self {
-        vec
+impl<'a> BodyChunk for &'a [u8] {
+    fn split_at(self, idx: usize) -> (Self, Self) {
+        self.split_at(idx)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self
     }
 }
