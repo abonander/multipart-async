@@ -57,6 +57,8 @@ macro_rules! try_opt (
 #[cfg(feature = "server")]
 pub mod server;
 
+mod helpers;
+
 /*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;
 */

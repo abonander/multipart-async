@@ -11,6 +11,8 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
+extern crate httparse;
+extern crate twoway;
 
 use futures::Stream;
 
@@ -23,6 +25,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::string::FromUtf8Error;
 use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryFinder;
@@ -38,6 +41,7 @@ macro_rules! try_opt (
 
 
 mod boundary;
+mod field;
 
 // FIXME: hyper integration once API is in place
 // #[cfg(feature = "hyper")]
@@ -50,7 +54,7 @@ const RANDOM_FILENAME_LEN: usize = 12;
 ///
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
 pub struct Multipart<S: Stream> {
-    reader: BoundaryFinder<S>,
+    stream: BoundaryFinder<S>,
 }
 
 impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
@@ -63,7 +67,7 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: From<io::Error>
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            reader: BoundaryFinder::new(stream, boundary),
+            stream: BoundaryFinder::new(stream, boundary),
         }
     }
 }
@@ -80,6 +84,10 @@ pub trait BodyChunk: Sized {
     fn is_empty(&self) -> bool {
         self.as_slice().is_empty()
     }
+
+    fn into_vec(self) -> Vec<u8> {
+        self.as_slice().to_owned()
+    }
 }
 
 impl BodyChunk for Vec<u8> {
@@ -91,6 +99,8 @@ impl BodyChunk for Vec<u8> {
     fn as_slice(&self) -> &[u8] {
         self
     }
+
+    fn into_vec(self) -> Vec<u8> { self }
 }
 
 impl<'a> BodyChunk for &'a [u8] {
@@ -102,3 +112,7 @@ impl<'a> BodyChunk for &'a [u8] {
         self
     }
 }
+
+pub trait StreamError: From<io::Error> + From<FromUtf8Error> {}
+
+impl<E> StreamError for E where E: From<io::Error> + From<FromUtf8Error> {}

@@ -19,6 +19,8 @@ use super::BodyChunk;
 
 use self::State::*;
 
+use helpers::*;
+
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
@@ -27,6 +29,7 @@ pub struct BoundaryFinder<S: Stream> {
     stream: S,
     state: State<S::Item>,
     boundary: Box<[u8]>,
+    pushed: Option<S::Item>,
 }
 
 impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
@@ -35,7 +38,24 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
             stream: stream,
             state: State::Watching,
             boundary: boundary.into().into_boxed_slice(),
+            pushed: None,
         }
+    }
+
+    pub fn push_chunk(&mut self, chunk: S::Item) {
+        debug_assert!(twoway::find_bytes(chunk.as_slice(), &self.boundary).is_none(),
+                      "Pushed chunk contains boundary: {:?}", lossy(chunk.as_slice()));
+
+        debug_assert!(self.pushed.is_none(),
+                      "Pushing a chunk when there already was one: {:?} Pushed: {:?}",
+                      lossy(self.pushed.take().unwrap().as_slice()), lossy(chunk.as_slice()));
+
+        if chunk.is_empty() {
+            debug!("BoundaryFinder::push_chunk() called with empty chunk");
+            return;
+        }
+
+        self.pushed = Some(chunk);
     }
 
     pub fn body_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
@@ -58,7 +78,12 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
         );
 
         loop {
-            trace!("body_chunk() loop state: {:?}", self.state);
+            trace!("body_chunk() loop state: {:?} pushed: {:?}", self.state,
+                   self.pushed.as_ref().map(|c| lossy(c.as_slice())));
+
+            if let Some(pushed) = self.pushed.take() {
+                return ready(pushed);
+            }
 
             match self.state {
                 Boundary(_) | BoundarySplit(_, _) | End => return ready(None),
@@ -348,22 +373,6 @@ fn check_last_two(boundary: &[u8]) -> bool {
     }
 
     is_end
-}
-
-fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
-    Ok(Async::Ready(val.into()))
-}
-
-fn not_ready<T, E>() -> Poll<T, E> {
-    Ok(Async::NotReady)
-}
-
-fn error<T, E: Into<Box<Error + Send + Sync>>, E_: From<io::Error>>(e: E) -> Poll<T, E_> {
-    Err(io::Error::new(io::ErrorKind::Other, e).into())
-}
-
-fn lossy(bytes: &[u8]) -> Cow<str> {
-    String::from_utf8_lossy(bytes)
 }
 
 /// Check if `needle` is cut off at the end of `haystack`, and if so, its index
