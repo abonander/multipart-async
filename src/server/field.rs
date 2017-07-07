@@ -62,6 +62,8 @@ impl<S: Stream> NextField<S> where S::Item: BodyChunk, S::Error: StreamError {
                 }
             }
 
+            // TODO: edge case where double-CRLF falls on chunk boundaries
+
             if self.accumulator.len().saturating_add(chunk.len()) > MAX_BUF_LEN {
                 return error("headers section too long or trailing double-CRLF missing");
             }
