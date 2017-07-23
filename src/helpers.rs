@@ -10,6 +10,8 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::io;
 
+pub use display_bytes::{display_bytes, DisplayBytes, ByteFormat};
+
 pub fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
     Ok(Async::Ready(val.into()))
 }
@@ -26,8 +28,8 @@ pub fn io_error<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
 }
 
-pub fn lossy(bytes: &[u8]) -> Cow<str> {
-    String::from_utf8_lossy(bytes)
+pub fn show_bytes(bytes: &[u8]) -> DisplayBytes<ByteFormat> {
+    display_bytes(bytes)
 }
 
 pub struct SomeCell<T> {

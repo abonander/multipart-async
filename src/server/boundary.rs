@@ -44,11 +44,11 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
     pub fn push_chunk(&mut self, chunk: S::Item) {
         debug_assert!(twoway::find_bytes(chunk.as_slice(), &self.boundary).is_none(),
-                      "Pushed chunk contains boundary: {:?}", lossy(chunk.as_slice()));
+                      "Pushed chunk contains boundary: {}", show_bytes(chunk.as_slice()));
 
         debug_assert!(self.pushed.is_none(),
-                      "Pushing a chunk when there already was one: {:?} Pushed: {:?}",
-                      lossy(self.pushed.take().unwrap().as_slice()), lossy(chunk.as_slice()));
+                      "Pushing a chunk when there already was one: {} Pushed: {}",
+                      show_bytes(self.pushed.take().unwrap().as_slice()), show_bytes(chunk.as_slice()));
 
         if chunk.is_empty() {
             debug!("BoundaryFinder::push_chunk() called with empty chunk");
@@ -79,7 +79,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
         loop {
             trace!("body_chunk() loop state: {:?} pushed: {:?}", self.state,
-                   self.pushed.as_ref().map(|c| lossy(c.as_slice())));
+                   self.pushed.as_ref().map(|c| c.as_slice()));
 
             if let Some(pushed) = self.pushed.take() {
                 return ready(pushed);
@@ -130,7 +130,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
     }
 
     fn check_chunk(&mut self, chunk: S::Item) -> PollOpt<S::Item, S::Error> {
-        trace!("check chunk: {:?}", lossy(chunk.as_slice()));
+        trace!("check chunk: {}", show_bytes(chunk.as_slice()));
 
         if let Some(res) = self.find_boundary(&chunk) {
             debug!("boundary found: {:?}", res);
@@ -227,26 +227,26 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
     fn confirm_boundary(&mut self, boundary: S::Item) -> Poll<bool, S::Error> {
         if boundary.len() < self.boundary_size(false) {
-            return error(format!("boundary sequence too short: {:?}",
-                                 lossy(boundary.as_slice())));
+            return error(format!("boundary sequence too short: {}",
+                                 show_bytes(boundary.as_slice())));
         }
 
         let (boundary, rem) = boundary.split_at(self.boundary_size(false));
         let boundary = boundary.as_slice();
 
-        trace!("confirming boundary: {:?}", lossy(boundary));
+        trace!("confirming boundary: {}", show_bytes(boundary));
 
         debug_assert!(!boundary.starts_with(b"\r\n"),
-                      "leading CRLF should have been trimmed from boundary: {:?}",
-                      lossy(boundary));
+                      "leading CRLF should have been trimmed from boundary: {}",
+                      show_bytes(boundary));
 
         debug_assert!(self.check_boundary(boundary),
-                      "invalid boundary previous confirmed as valid: {:?}",
-                      lossy(boundary));
+                      "invalid boundary previous confirmed as valid: {}",
+                      show_bytes(boundary));
 
         self.state = if !rem.is_empty() { Remainder(rem) } else { Watching };
 
-        trace!("boundary found: {:?}", lossy(boundary));
+        trace!("boundary found: {}", show_bytes(boundary));
 
         let len = boundary.len();
 
@@ -264,9 +264,9 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
         let check_len = self.boundary_size(false) - first.len();
 
         if second.len() < check_len {
-            return error(format!("split boundary sequence too short: ({:?}, {:?})",
-                                 lossy(first),
-                                 lossy(second.as_slice())));
+            return error(format!("split boundary sequence too short: ({}, {})",
+                                 show_bytes(first),
+                                 show_bytes(second.as_slice())));
         }
 
         let (second, rem) = second.split_at(check_len);
@@ -275,12 +275,12 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
         self.state = Remainder(rem);
 
         debug_assert!(!first.starts_with(b"\r\n"),
-                      "leading CRLF should have been trimmed from first boundary section: {:?}",
-                      lossy(first));
+                      "leading CRLF should have been trimmed from first boundary section: {}",
+                      show_bytes(first));
 
         debug_assert!(self.check_boundary_split(first, second),
-                      "invalid split boundary previous confirmed as valid: ({:?}, {:?})",
-                      lossy(first), lossy(second));
+                      "invalid split boundary previous confirmed as valid: ({}, {})",
+                      show_bytes(first), show_bytes(second));
 
         let is_end = check_last_two(second);
 
@@ -324,12 +324,12 @@ impl<B: BodyChunk> fmt::Debug for State<B> {
 
         match *self {
             Watching => f.write_str("State::Watching"),
-            Partial(ref bnd, res) => write!(f, "State::Partial({:?}, {:?})", lossy(bnd.as_slice()), res),
-            Boundary(ref bnd) => write!(f, "State::Boundary({:?})", lossy(bnd.as_slice())),
-            BoundarySplit(ref first, ref second) => write!(f, "State::BoundarySplit({:?}, {:?})",
-                                                           lossy(first.as_slice()),
-                                                           lossy(second.as_slice())),
-            Remainder(ref rem) => write!(f, "State::Remainder({:?})", lossy(rem.as_slice())),
+            Partial(ref bnd, res) => write!(f, "State::Partial({}, {:?})", show_bytes(bnd.as_slice()), res),
+            Boundary(ref bnd) => write!(f, "State::Boundary({})", show_bytes(bnd.as_slice())),
+            BoundarySplit(ref first, ref second) => write!(f, "State::BoundarySplit({}, {})",
+                                                           show_bytes(first.as_slice()),
+                                                           show_bytes(second.as_slice())),
+            Remainder(ref rem) => write!(f, "State::Remainder({})", show_bytes(rem.as_slice())),
             End => f.write_str("State::End"),
         }
     }
@@ -396,7 +396,7 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod test {
-    use super::{BoundaryFinder, ready, not_ready, lossy};
+    use super::{BoundaryFinder, ready, not_ready, show_bytes};
 
     use server::BodyChunk;
 
@@ -495,7 +495,7 @@ mod test {
     fn assert_boundary(finder: &mut TestingFinder, is_end: bool) {
         loop {
             match finder.body_chunk().expect("Error from BoundaryFinder") {
-                Ready(Some(chunk)) => panic!("Unexpected chunk from BoundaryFinder: {:?}", lossy(chunk.as_slice())),
+                Ready(Some(chunk)) => panic!("Unexpected chunk from BoundaryFinder: {}", show_bytes(chunk.as_slice())),
                 Ready(None) => break,
                 NotReady => (),
             }
