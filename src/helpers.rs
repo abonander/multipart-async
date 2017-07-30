@@ -48,7 +48,9 @@ impl<T> SomeCell<T> {
     }
 
     pub fn try_as_mut(&mut self) -> io::Result<&mut T> {
-        self.opt.as_mut().ok_or_else(|| io_error(self.err))
+        // Sub-borrow for closure
+        let err = self.err;
+        self.opt.as_mut().ok_or_else(|| io_error(err))
     }
 
     pub fn try_take(&mut self) -> io::Result<T> {

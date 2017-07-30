@@ -60,6 +60,10 @@ impl<S: Stream> NextField<S> where S::Item: BodyChunk, S::Error: StreamError {
                 } else {
                     break ready(parse_headers(headers.as_slice())?);
                 }
+            } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
+                let (head, tail) = chunk.split_at(split_idx);
+                self.accumulator.extend_from_slice(head.as_slice());
+                continue;
             }
 
             // TODO: edge case where double-CRLF falls on chunk boundaries
@@ -125,10 +129,34 @@ impl<S: Stream> Future for NextField<S> where S::Item: BodyChunk, S::Error: Stre
     }
 }
 
+const CRLF2: &[u8] = b"\r\n\r\n";
+
+/// Check if the double-CRLF falls between chunk boundaries, and if so, the split index of
+/// the second boundary
+fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
+    fn split_subcheck(start: usize, first: &[u8], second: &[u8]) -> bool {
+        first.len() >= start && first[first.len() - start ..].iter().chain(second).take(4).eq(CRLF2)
+    }
+
+    let len = first.len();
+
+    if split_subcheck(3, first, second) {
+        Some(1)
+    } else if split_subcheck(2, first, second) {
+        Some(2)
+    } else if split_subcheck(1, first, second) {
+        Some(3)
+    } else {
+        None
+    }
+}
+
 fn parse_headers(bytes: &[u8]) -> io::Result<Headers> {
-        let mut header_buf = httparse::parse_headers(bytes).map_err(io_error)?;
-
-
+    debug_assert!(bytes.ends_with(b"\r\n\r\n"),
+                  "header byte sequence does not end with `\\r\\n\\r\\n`: {:?}",
+                  lossy(bytes));
+    
+    unimplemented!()
 }
 
 struct Headers {
@@ -162,3 +190,12 @@ pub struct FileData<S: Stream> {
 }
 
 const CONT_DISP: &str = "Content-Disposition";
+
+#[test]
+fn test_header_end_split() {
+    assert_eq!(header_end_split(b"\r\n\r", b"\n"), Some(1));
+    assert_eq!(header_end_split(b"\r\n", b"\r\n"), Some(2));
+    assert_eq!(header_end_split(b"\r", b"\n\r\n"), Some(3));
+    assert_eq!(header_end_split(b"\r\n\r\n", b"FOOBAR"), None);
+    assert_eq!(header_end_split(b"FOOBAR", b"\r\n\r\n"), None);
+}
