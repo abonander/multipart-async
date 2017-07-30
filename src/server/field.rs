@@ -153,8 +153,8 @@ fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
 
 fn parse_headers(bytes: &[u8]) -> io::Result<Headers> {
     debug_assert!(bytes.ends_with(b"\r\n\r\n"),
-                  "header byte sequence does not end with `\\r\\n\\r\\n`: {:?}",
-                  lossy(bytes));
+                  "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
+                  show_bytes(bytes));
     
     unimplemented!()
 }
