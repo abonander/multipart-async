@@ -9,7 +9,7 @@ use futures::Async::*;
 
 use mime::Mime;
 
-use std::{io, mem};
+use std::{io, mem, str};
 
 use server::boundary::BoundaryFinder;
 use server::{BodyChunk, StreamError, Multipart, httparse, twoway};
@@ -155,10 +155,57 @@ fn parse_headers(bytes: &[u8]) -> io::Result<Headers> {
     debug_assert!(bytes.ends_with(b"\r\n\r\n"),
                   "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
                   show_bytes(bytes));
-    
+
     unimplemented!()
 }
+    let mut header_buf = [EMPTY_HEADER; MAX_HEADERS];
 
+    let (_, headers) = httparse::parse_headers(bytes, &mut header_buf).map_err(io_error)?;
+
+    let mut out_headers = Headers::default();
+
+    for header in headers {
+        let str_val = str::from_utf8(header.value)
+            .map_err(|_| io_error("multipart field headers must be UTF-8 encoded"))?
+            .trim();
+
+        match header.name {
+            "Content-Disposition" => parse_cont_disp_val(str_val, &mut out_headers)?,
+            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>().map_err(io_error)),
+        }
+    }
+
+    Ok(out_headers)
+}
+
+fn parse_cont_disp_val(val: &str, out: &mut Headers) -> io::Result<()> {
+    // Only take the first section, the rest can be in quoted strings that we want to handle
+    let mut sections = val.splitn(';', 1).map(str::trim);
+
+    match sections.next() {
+        Some("form-data") => (),
+        Some(other) => error(format!("unexpected multipart field Content-Disposition: {}", other))?,
+        None => error("each multipart field requires a Content-Disposition: form-data header")?,
+    }
+
+    let keyvals = sections.next().unwrap_or("");
+
+    for section in sections {
+        if section.starts_with("name") {
+            out.name =
+        }
+    }
+
+    if out.name.is_empty() {
+        return error(format!("expected 'name' attribute in Content-Disposition: {}", val));
+    }
+
+    Ok(())
+}
+
+fn collect_param_val
+
+#[derive(Default)]
 struct Headers {
     name: String,
     cont_type: Option<Mime>,

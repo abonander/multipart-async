@@ -60,7 +60,7 @@ pub struct Multipart<S: Stream> {
 impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
-    pub fn new<B: Into<String>>(stream: S, boundary: B) -> Self {
+    pub fn with_body<B: Into<String>>(stream: S, boundary: B) -> Self {
         let mut boundary = boundary.into();
         boundary.insert_str(0, "--");
 
