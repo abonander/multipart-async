@@ -56,9 +56,9 @@ impl<S: Stream> NextField<S> where S::Item: BodyChunk, S::Error: StreamError {
                     let headers = parse_headers(&self.accumulator)?;
                     self.accumulator.clear();
 
-                    break ready(headers);
+                    return ready(headers);
                 } else {
-                    break ready(parse_headers(headers.as_slice())?);
+                    return ready(parse_headers(headers.as_slice())?);
                 }
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
@@ -156,8 +156,6 @@ fn parse_headers(bytes: &[u8]) -> io::Result<Headers> {
                   "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
                   show_bytes(bytes));
 
-    unimplemented!()
-}
     let mut header_buf = [EMPTY_HEADER; MAX_HEADERS];
 
     let (_, headers) = httparse::parse_headers(bytes, &mut header_buf).map_err(io_error)?;
@@ -188,11 +186,15 @@ fn parse_cont_disp_val(val: &str, out: &mut Headers) -> io::Result<()> {
         None => error("each multipart field requires a Content-Disposition: form-data header")?,
     }
 
-    let keyvals = sections.next().unwrap_or("");
+    let mut rem = sections.next().unwrap_or("");
 
-    for section in sections {
-        if section.starts_with("name") {
-            out.name =
+    while let Some((key, val, rest)) = parse_keyval(rem) {
+        rem = rest;
+
+        match key {
+            "name" => out.name = val.to_string(),
+            "filename" => out.filename = Some(val.to_string()),
+            other => debug!("unknown key-value pair in Content-Disposition: {:?} = {:?}", key, val),
         }
     }
 
@@ -203,7 +205,41 @@ fn parse_cont_disp_val(val: &str, out: &mut Headers) -> io::Result<()> {
     Ok(())
 }
 
-fn collect_param_val
+fn parse_keyval(input: &str) -> Option<(&str, &str, &str)> {
+    let (name, rest) = try_opt!(param_name(input));
+    let (val, rest) = try_opt!(param_val(rest));
+
+    Some((name, val, rest))
+}
+
+fn param_name(input: &str) -> Option<(&str, &str)> {
+    let mut splits = input.trim_left_matches(&[' ', ';']).splitn('=', 1);
+
+    let name = try_opt!(splits.next()).trim();
+    let rem = splits.next().unwrap_or("");
+
+    Some((name, rem))
+}
+
+fn param_val(input: &str) -> Option<(&str, &str)> {
+    let mut splits = input.splitn(&['"'], 2);
+
+    let token = try_opt!(splits.next()).trim();
+
+    // the value doesn't have to be in quotes if it doesn't contain forbidden chars like `;`
+    if !token.is_empty() {
+        let mut splits = token.splitn(';', 1);
+        let token = try_opt!(splits.next()).trim();
+        let rem = splits.next().unwrap_or("");
+
+        return Some((token, rem));
+    }
+
+    let qstr = try_opt!(splits.next()).trim();
+    let rem = splits.next().unwrap_or_else(|| { warn!("unterminated quote: {:?}", qstr); "" });
+
+    Some((qstr, rem))
+}
 
 #[derive(Default)]
 struct Headers {
