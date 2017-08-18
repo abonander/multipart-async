@@ -63,10 +63,10 @@ impl<S: Stream> NextField<S> where S::Item: BodyChunk, S::Error: StreamError {
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
                 self.accumulator.extend_from_slice(head.as_slice());
+                self.stream.push_chunk(tail);
                 continue;
             }
 
-            // TODO: edge case where double-CRLF falls on chunk boundaries
 
             if self.accumulator.len().saturating_add(chunk.len()) > MAX_BUF_LEN {
                 return error("headers section too long or trailing double-CRLF missing");
