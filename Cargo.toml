@@ -31,6 +31,8 @@ twoway = { version = "*", optional = true }
 
 [features]
 client = []
-default = ["hyper", "server", "client"]
+default = ["hyper", "server", "client", "use_arc"]
 server = ["twoway", "httparse"]
 sse4 = ["twoway/pcmp"]
+# Use `Arc` instead of `Rc` where needed
+use_arc = []

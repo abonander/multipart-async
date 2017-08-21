@@ -42,7 +42,10 @@ extern crate hyper;
 
 use rand::Rng;
 
-#[macro_export]
+use std::rc::Rc;
+use std::sync::Arc;
+
+//#[macro_export]
 macro_rules! try_opt (
     ($expr:expr) => (
         match $expr {
@@ -50,6 +53,19 @@ macro_rules! try_opt (
             None => return None,
         }
     )
+);
+
+//#[macro_export]
+macro_rules! try_opt_ready (
+    ($expr:expr) => ({
+        use futures::Async::*;
+
+        match $expr? {
+            Ready(Some(val)) => val,
+            Ready(None) => return Ready(None),
+            NotReady => return NotReady,
+        }
+    })
 );
 
 // FIXME: after server prototype is working
@@ -68,3 +84,14 @@ fn random_alphanumeric(len: usize) -> String {
     rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
 
+/// The reference-counted type currently being used.
+///
+/// Add the `use_arc` feature flag to make this `Arc` for sharing across threads.
+#[cfg(not(feature = "use_arc"))]
+pub type MyRc<T> = Rc<T>;
+
+/// The reference-counted type currently being used.
+///
+/// Remove the `use_arc` feature flag to make this `Rc` for cheaper clones and drops.
+#[cfg(feature = "use_arc")]
+pub type MyRc<T> = Arc<T>;

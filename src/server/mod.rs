@@ -43,21 +43,23 @@ macro_rules! try_opt (
 mod boundary;
 mod field;
 
+mod fold;
+
+pub use field::{Field, FieldHeaders, FieldData};
+
 // FIXME: hyper integration once API is in place
 // #[cfg(feature = "hyper")]
 // mod hyper;
-
-
-const RANDOM_FILENAME_LEN: usize = 12;
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
 /// Implements `Borrow<R>` to allow access to the request body, if desired.
 pub struct Multipart<S: Stream> {
     stream: BoundaryFinder<S>,
+    fields: field::ReadFields,
 }
 
-impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
+impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
     pub fn with_body<B: Into<String>>(stream: S, boundary: B) -> Self {
@@ -68,7 +70,20 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: From<io::Error>
 
         Multipart { 
             stream: BoundaryFinder::new(stream, boundary),
+            fields: field::State::EatBoundary,
         }
+    }
+
+    pub fn poll_field(&mut self) -> Poll<Option<Field<S>>, S::Error> {
+        field::poll_field(self)
+    }
+
+    pub fn next_field(&mut self) {
+        self.fields.next_field();
+    }
+
+    pub fn fold_fields<T, F>(self, init: T, folder: F) where F: FnMut(&mut R, Field) -> Poll<(), S::Error> {
+        fold::FoldFields { folder, state: init, multipart: self }
     }
 }
 
@@ -113,6 +128,15 @@ impl<'a> BodyChunk for &'a [u8] {
     }
 }
 
-pub trait StreamError: From<io::Error> + From<FromUtf8Error> {}
+
+pub trait StreamError: From<io::Error> + From<FromUtf8Error> {
+    fn from_string(string: String) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, string)
+    }
+}
 
 impl<E> StreamError for E where E: From<io::Error> + From<FromUtf8Error> {}
+
+impl StreamError for String {
+    fn from_string(string: String) -> Self { string }
+}

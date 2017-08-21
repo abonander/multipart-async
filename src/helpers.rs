@@ -9,8 +9,15 @@ use futures::{Poll, Async, Stream};
 use std::borrow::Cow;
 use std::error::Error;
 use std::io;
+use std::mem;
+use std::rc::Rc;
+use std::sync::Arc;
 
 pub use display_bytes::display_bytes as show_bytes;
+
+pub use futures::Poll;
+
+pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
 pub fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
     Ok(Async::Ready(val.into()))
@@ -26,6 +33,10 @@ pub fn error<T, E: Into<Box<Error + Send + Sync>>, E_: From<io::Error>>(e: E) ->
 
 pub fn io_error<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
+}
+
+pub fn replace_default<T: Default>(dest: &mut T) -> T {
+    mem::replace(dest, T::default())
 }
 
 pub struct SomeCell<T> {
