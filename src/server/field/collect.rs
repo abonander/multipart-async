@@ -42,6 +42,12 @@ impl CollectStr {
 
             let [first, second] = try_opt_ready!(stream.another_chunk(invalid));
 
+            self.accum.push_str(str::from_utf8(first.as_slice())
+                .expect("this was UTF-8 before"));
+
+            buf[..second.len()].copy_from_slice(second.as_slice());
+
+
 
         }
 
