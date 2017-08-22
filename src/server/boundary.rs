@@ -60,10 +60,11 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
 
     /// Try to poll for another chunk; if successful, return both of them, otherwise push the first
     /// chunk back.
-    pub fn another_chunk(&mut self, first: S::Item) -> PollOpt<[S::Item; 2], S::Error> {
+    pub fn another_chunk(&mut self, first: S::Item) -> PollOpt<(S::Item, S::Item), S::Error> {
         match self.body_chunk() {
-            Ok(Async::Ready(Some(second))) => ready(Some([first, second])),
-            res => { self.push_chunk(first); res },
+            Ok(Async::Ready(Some(second))) => ready(Some((first, second))),
+            Ok(Async::NotReady) => { self.push_chunk(first); Ok(Async::NotReady) }
+            Err(e) => { self.push_chunk(first); Err(e) },
         }
     }
 

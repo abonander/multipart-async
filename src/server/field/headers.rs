@@ -1,8 +1,18 @@
-use futures::{Poll};
+use futures::{Poll, Stream};
 
-use server::{Multipart, BodyChunk, StreamError};
+use mime::Mime;
+
+use std::{io, str};
+
+use server::{Multipart, BodyChunk, StreamError, httparse, twoway};
+use server::boundary::BoundaryFinder;
+
+use self::httparse::EMPTY_HEADER;
 
 use helpers::*;
+
+const MAX_BUF_LEN: usize = 1024;
+const MAX_HEADERS: usize = 4;
 
 #[derive(Clone, Default, Debug)]
 pub struct FieldHeaders {
@@ -11,36 +21,43 @@ pub struct FieldHeaders {
     pub filename: Option<String>,
 }
 
-#[derive(Default)]
-struct ReadHeaders {
+#[derive(Debug, Default)]
+pub struct ReadHeaders {
     accumulator: Vec<u8>
 }
 
 impl ReadHeaders {
-    fn read_headers<S>(&mut self, multi: &mut Multipart<S>) -> Poll<FieldHeaders, S::Error> where S::Item: BodyChunk, S::Error: StreamError {
+    pub fn read_headers<S: Stream>(&mut self, stream: &mut BoundaryFinder<S>) -> PollOpt<FieldHeaders, S::Error>
+    where S::Item: BodyChunk, S::Error: StreamError {
         loop {
-            let chunk = try_ready!(self.stream.poll())
-                .ok_or_else(|| io_error("unexpected end of stream"))?;
+            let chunk = match try_ready!(stream.poll()) {
+                Some(chunk) => chunk,
+                None => return if !self.accumulator.is_empty() {
+                    io_error("unexpected end of stream")
+                } else {
+                    ready(None)
+                },
+            };
 
             // End of the headers section is signalled by a double-CRLF
             if let Some(header_end) = twoway::find_bytes(chunk.as_slice(), b"\r\n\r\n") {
                 // Split after the double-CRLF because we don't want to yield it and httparse expects it
                 let (headers, rem) = chunk.split_at(header_end + 4);
-                self.stream.try_as_mut()?.push_chunk(rem);
+                stream.push_chunk(rem);
 
                 if !self.accumulator.is_empty() {
                     self.accumulator.extend_from_slice(headers.as_slice());
                     let headers = parse_headers(&self.accumulator)?;
                     self.accumulator.clear();
 
-                    return ready(headers);
+                    return ready(Some(headers));
                 } else {
-                    return ready(parse_headers(headers.as_slice())?);
+                    return ready(Some(parse_headers(headers.as_slice())?));
                 }
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
                 self.accumulator.extend_from_slice(head.as_slice());
-                self.stream.push_chunk(tail);
+                stream.push_chunk(tail);
                 continue;
             }
 
@@ -97,7 +114,7 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
 
         match header.name {
             "Content-Disposition" => parse_cont_disp_val(str_val, &mut out_headers)?,
-            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>().map_err(io_error)),
+            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>().map_err(io_error)?),
         }
     }
 
@@ -106,7 +123,7 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
 
 fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> io::Result<()> {
     // Only take the first section, the rest can be in quoted strings that we want to handle
-    let mut sections = val.splitn(';', 1).map(str::trim);
+    let mut sections = val.splitn(1, ';').map(str::trim);
 
     match sections.next() {
         Some("form-data") => (),
@@ -141,7 +158,7 @@ fn parse_keyval(input: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn param_name(input: &str) -> Option<(&str, &str)> {
-    let mut splits = input.trim_left_matches(&[' ', ';']).splitn('=', 1);
+    let mut splits = input.trim_left_matches(&[' ', ';'][..]).splitn(1, '=');
 
     let name = try_opt!(splits.next()).trim();
     let rem = splits.next().unwrap_or("");
@@ -150,13 +167,13 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
 }
 
 fn param_val(input: &str) -> Option<(&str, &str)> {
-    let mut splits = input.splitn(&['"'], 2);
+    let mut splits = input.splitn(2, &['"'][..]);
 
     let token = try_opt!(splits.next()).trim();
 
     // the value doesn't have to be in quotes if it doesn't contain forbidden chars like `;`
     if !token.is_empty() {
-        let mut splits = token.splitn(';', 1);
+        let mut splits = token.splitn(1, ';');
         let token = try_opt!(splits.next()).trim();
         let rem = splits.next().unwrap_or("");
 

@@ -1,10 +1,10 @@
-use futures::{Poll, Stream};
+use futures::{Future, Poll, Stream};
 
-use field::Field;
+use super::field::Field;
 
 use super::{BodyChunk, Multipart, StreamError};
 
-pub struct FoldFields<F, R, S> {
+pub struct FoldFields<F, R, S: Stream> {
     folder: F,
     state: R,
     multipart: Multipart<S>

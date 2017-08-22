@@ -45,29 +45,6 @@ use rand::Rng;
 use std::rc::Rc;
 use std::sync::Arc;
 
-//#[macro_export]
-macro_rules! try_opt (
-    ($expr:expr) => (
-        match $expr {
-            Some(val) => val,
-            None => return None,
-        }
-    )
-);
-
-//#[macro_export]
-macro_rules! try_opt_ready (
-    ($expr:expr) => ({
-        use futures::Async::*;
-
-        match $expr? {
-            Ready(Some(val)) => val,
-            Ready(None) => return Ready(None),
-            NotReady => return NotReady,
-        }
-    })
-);
-
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]
 //pub mod client;
