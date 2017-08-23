@@ -2,7 +2,7 @@ use futures::{Future, Stream};
 use futures::Async::*;
 
 use std::rc::Rc;
-use std::str;
+use std::{fmt, str};
 
 use server::boundary::BoundaryFinder;
 use server::{Internal, BodyChunk, StreamError};
@@ -16,7 +16,7 @@ pub struct TextField {
     pub text: String,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct ReadFieldText<S: Stream> {
     data: Option<FieldData<S>>,
     accum: String,
@@ -26,7 +26,7 @@ pub struct ReadFieldText<S: Stream> {
 
 pub fn read_text<S: Stream>(data: FieldData<S>, limit: Option<usize>) -> ReadFieldText<S> {
     ReadFieldText {
-        headers: data.headers.clone(), data, limit, accum: String::new()
+        headers: data.headers.clone(), data: Some(data), limit, accum: String::new()
     }
 }
 
@@ -127,6 +127,16 @@ impl<S: Stream> Future for ReadFieldText<S> where S::Item: BodyChunk, S::Error: 
         }
 
         res
+    }
+}
+
+impl<S: Stream> fmt::Debug for ReadFieldText<S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ReadFieldText")
+            .field("accum", &self.accum)
+            .field("headers", &self.headers)
+            .field("limit", &self.limit)
+            .finish()
     }
 }
 

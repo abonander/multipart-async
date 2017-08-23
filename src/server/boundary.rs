@@ -32,7 +32,7 @@ pub struct BoundaryFinder<S: Stream> {
     pushed: Option<S::Item>,
 }
 
-impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
+impl<S: Stream> BoundaryFinder<S> {
     pub fn new<B: Into<Vec<u8>>>(stream: S, boundary: B) -> BoundaryFinder<S> {
         BoundaryFinder {
             stream: stream,
@@ -41,6 +41,9 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
             pushed: None,
         }
     }
+}
+
+impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
 
     pub fn push_chunk(&mut self, chunk: S::Item) {
         debug_assert!(twoway::find_bytes(chunk.as_slice(), &self.boundary).is_none(),

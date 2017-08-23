@@ -46,15 +46,11 @@ macro_rules! try_opt (
 mod boundary;
 mod field;
 
-mod fold;
-
 use helpers::*;
 
 use self::field::ReadHeaders;
 
 pub use self::field::{Field, FieldHeaders, FieldData};
-
-pub use self::fold::FoldFields;
 
 // FIXME: hyper integration once API is in place
 // #[cfg(feature = "hyper")]
@@ -80,7 +76,7 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
 
         Multipart { 
             internal: Rc::new(Internal::new(stream, boundary)),
-            read_hdr: ReadHeaders,
+            read_hdr: ReadHeaders::default(),
         }
     }
 
@@ -96,7 +92,14 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.internal.on_field.get() { return not_ready(); }
 
-        unimplemented!()
+        let mut stream = self.internal.stream_mut();
+
+        let headers = match try_ready!(self.read_hdr.read_headers(&mut stream)) {
+            Some(headers) => headers,
+            None => return ready(None),
+        };
+
+        ready(field::new_field(headers, self.internal.clone()))
     }
 }
 
@@ -106,14 +109,14 @@ struct Internal<S: Stream> {
     waiting_task: Cell<Option<Task>>,
 }
 
-impl<S: Stream> Internal<S> where S::Item: BodyChunk, S::Error: StreamError {
+impl<S: Stream> Internal<S> {
     fn new(stream: S, boundary: String) -> Self {
         debug_assert!(boundary.starts_with("--"), "Boundary must start with --");
 
         Internal {
             stream: BoundaryFinder::new(stream, boundary).into(),
             on_field: false.into(),
-            waiting_task: None,
+            waiting_task: None.into(),
         }
     }
 

@@ -33,7 +33,7 @@ impl ReadHeaders {
             let chunk = match try_ready!(stream.poll()) {
                 Some(chunk) => chunk,
                 None => return if !self.accumulator.is_empty() {
-                    io_error("unexpected end of stream")
+                    error("unexpected end of stream")
                 } else {
                     ready(None)
                 },
