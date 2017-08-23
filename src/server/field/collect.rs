@@ -1,22 +1,44 @@
-use futures::Stream;
+use futures::{Future, Stream};
 use futures::Async::*;
 
+use std::rc::Rc;
 use std::str;
 
 use server::boundary::BoundaryFinder;
-use server::{BodyChunk, StreamError};
+use server::{Internal, BodyChunk, StreamError};
+
+use super::{FieldHeaders, FieldData};
 
 use helpers::*;
 
+pub struct TextField {
+    pub headers: Rc<FieldHeaders>,
+    pub text: String,
+}
+
 #[derive(Default, Debug)]
-pub struct CollectStr {
+pub struct ReadFieldText<S: Stream> {
+    data: Option<FieldData<S>>,
     accum: String,
+    pub headers: Rc<FieldHeaders>,
     pub limit: Option<usize>,
 }
 
-impl CollectStr {
-    pub fn collect<S: Stream>(&mut self, stream: &mut BoundaryFinder<S>) -> Poll<String, S::Error>
-    where S::Item: BodyChunk, S::Error: StreamError {
+pub fn read_text<S: Stream>(data: FieldData<S>, limit: Option<usize>) -> ReadFieldText<S> {
+    ReadFieldText {
+        headers: data.headers.clone(), data, limit, accum: String::new()
+    }
+}
+
+impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError {
+    fn poll_(&mut self) -> Poll<TextField, S::Error> {
+        let data = match self.data {
+            Some(ref data) => data,
+            None => return not_ready(),
+        };
+
+        let mut stream = data.internal.stream_mut();
+
         loop {
             let chunk = match try_ready!(stream.body_chunk()) {
                 Some(val) => val,
@@ -27,8 +49,8 @@ impl CollectStr {
                 // This also catches capacity overflows but only when a limit is set
                 if self.accum.len().saturating_add(chunk.len()) > limit {
                     stream.push_chunk(chunk);
-                    return Err(StreamError::from_string(format!("String field exceeded limit of \
-                                                                  {} bytes", limit)));
+                    return Err(StreamError::from_string(format!("String field exceeded limit \
+                                                                       of {} bytes", limit)));
                 }
             }
 
@@ -61,7 +83,7 @@ impl CollectStr {
             if second.len() < needed_len {
                 return error(format!("got a chunk smaller than the {} byte(s) needed to finish \
                                         decoding this UTF-8 sequence: {:?}",
-                                        needed_len, first.as_slice()));
+                                     needed_len, first.as_slice()));
             }
 
             let mut buf = [0u8; 4];
@@ -85,7 +107,26 @@ impl CollectStr {
             }
         }
 
-        ready(replace_default(&mut self.accum))
+        ready(TextField {
+            headers: self.headers.clone(),
+            text: replace_default(&mut self.accum)
+        })
+    }
+}
+
+impl<S: Stream> Future for ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError {
+    type Item = TextField;
+    type Error = S::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, S::Error> {
+        let res = self.poll_();
+
+        // Drop `FieldData` so it can free up a blocked task to process the next field
+        if let Ok(Ready(_)) = res {
+            self.data = None;
+        }
+
+        res
     }
 }
 

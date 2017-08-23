@@ -60,15 +60,3 @@ mod local_test;
 fn random_alphanumeric(len: usize) -> String {
     rand::thread_rng().gen_ascii_chars().take(len).collect()
 }
-
-/// The reference-counted type currently being used.
-///
-/// Add the `use_arc` feature flag to make this `Arc` for sharing across threads.
-#[cfg(not(feature = "use_arc"))]
-pub type MyRc<T> = Rc<T>;
-
-/// The reference-counted type currently being used.
-///
-/// Remove the `use_arc` feature flag to make this `Rc` for cheaper clones and drops.
-#[cfg(feature = "use_arc")]
-pub type MyRc<T> = Arc<T>;

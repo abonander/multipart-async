@@ -9,94 +9,38 @@ use futures::Async::*;
 
 use mime::{self, Mime};
 
+use std::rc::Rc;
 use std::{io, mem, str};
 
 use server::boundary::BoundaryFinder;
-use server::{BodyChunk, StreamError, Multipart, httparse, twoway};
+use server::{Internal, BodyChunk, StreamError, Multipart, httparse, twoway};
 
 use helpers::*;
 
-use MyRc;
 
 use self::httparse::EMPTY_HEADER;
 
 mod collect;
 mod headers;
 
-pub use self::headers::FieldHeaders;
+pub use self::headers::{FieldHeaders, ReadHeaders};
 
-use self::collect::CollectStr;
-use self::headers::ReadHeaders;
+pub use self::collect::{ReadFieldText, TextField};
 
-#[derive(Debug)]
-pub struct ReadFields {
-    state: State
-}
-
-#[derive(Debug)]
-enum State {
-    NextField(ReadHeaders),
-    OnField(MyRc<FieldHeaders>, Option<CollectStr>),
-}
-
-impl ReadFields {
-    pub fn new() -> Self {
-        ReadFields {
-            state: State::NextField(ReadHeaders::default())
-        }
-    }
-
-    pub fn next_field(&mut self) {
-        self.state = State::NextField(Default::default());
-    }
-
-    pub fn poll_field<'a, S: Stream + 'a>(&'a mut self, stream: &'a mut BoundaryFinder<S>) -> PollOpt<Field<'a, S>, S::Error> where S::Item: BodyChunk, S::Error: StreamError {
-        loop {
-            let headers = match self.state {
-                State::NextField(ref mut read_hdrs) => try_ready!(read_hdrs.read_headers()),
-                State::OnField()
-            }
-        }
-    }
-
-    fn collect_str(&mut self) -> &mut CollectStr {
-        loop {
-            match self.state {
-                State::OnField(_, Some(ref mut collect)) => return collect,
-                State::OnField(_, ref mut opt) => *opt = Some(CollectStr::default()),
-                _ => panic!("Invalid state for collecting string: {:?}", self.state),
-            }
-        }
-    }
-
-    fn headers(&self) -> &FieldHeaders {
-        match self.state {
-            State::OnField(ref headers, _) => return headers,
-            _ => panic!("Invalid state for collecting string: {:?}", self.state),
-        }
-    }
-}
-
-
-pub struct Field<'a, S: Stream + 'a> {
+pub struct Field<S: Stream> {
     /// The headers of this field, including the name, filename, and `Content-Type`.
-    ///
-    /// If the `use_arc` feature is set, the `MyRc` type is `Arc` for sharing across threads.
-    /// Otherwise, it is `Rc` for cheaper, non-atomic refcount updates.
-    pub headers: MyRc<FieldHeaders>,
-    pub data: FieldData<'a, S>,
+    pub headers: Rc<FieldHeaders>,
+    pub data: FieldData<S>,
 }
 
-pub struct FieldData<'a, S: Stream + 'a> {
-    stream: &'a mut BoundaryFinder<S>,
-    fields: &'a mut ReadFields,
+pub struct FieldData<S: Stream> {
+    headers: Rc<FieldHeaders>,
+    internal: Rc<Internal<S>>,
 }
 
-impl<'a, S: Stream + 'a> FieldData<'a, S> where S::Item: BodyChunk, S::Error: StreamError {
-    /// Attempt to read the next field in the stream, discarding the remaining data in this field.
-    pub fn next_field(self) -> Poll<Option<Field<'a, S>>, S::Error> {
-        self.fields.poll_field(self.stream)
-    }
+impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
+
+    pub fn done(self) { drop(self) }
 
     /// Attempt to read the field data to a string.
     ///
@@ -115,8 +59,8 @@ impl<'a, S: Stream + 'a> FieldData<'a, S> where S::Item: BodyChunk, S::Error: St
     /// or if the field body could not be decoded as UTF-8, an error is returned.
     ///
     /// If you want to decode text in a different charset, you will need to implement it yourself.
-    pub fn read_string(&mut self, limit: Option<usize>) -> Poll<String, S::Error> {
-        if let Some(cont_type) = self.fields.headers().cont_type {
+    pub fn read_string(self, limit: Option<usize>) -> ReadFieldText<S> {
+        if let Some(ref cont_type) = self.headers.cont_type {
             if cont_type.type_() != mime::TEXT {
                 warn!("attempting to collect a non-text field {:?} to a string",
                       self.fields.headers());
@@ -130,18 +74,23 @@ impl<'a, S: Stream + 'a> FieldData<'a, S> where S::Item: BodyChunk, S::Error: St
             }
         }
 
-        let collect = self.fields.collect_str();
-        collect.limit = limit;
-        collect.collect(self.stream)
+        collect::read_text(self, limit)
     }
 }
 
-impl<'s, S: Stream + 's> Stream for FieldData<'s, S> where S::Item: BodyChunk, S::Error: StreamError {
+impl<S: Stream> Stream for FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
     type Item = S::Item;
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.stream.body_chunk()
+        self.internal.stream_mut().body_chunk()
+    }
+}
+
+impl<S: Stream> Drop for FieldData<S> {
+    fn drop(&mut self) {
+        self.internal.on_field.set(false);
+        self.internal.notify_task();
     }
 }
 

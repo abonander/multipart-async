@@ -68,10 +68,6 @@ impl ReadHeaders {
             self.accumulator.extend_from_slice(chunk.as_slice());
         }
     }
-
-    fn take_accumulator(&mut self) -> Vec<u8> {
-        replace_default(&mut self.accumulator)
-    }
 }
 
 const CRLF2: &[u8] = b"\r\n\r\n";

@@ -15,16 +15,19 @@ extern crate httparse;
 extern crate twoway;
 
 use futures::{Poll, Stream};
+use futures::task::{self, Task};
 
 use mime::Mime;
 
 use tempdir::TempDir;
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell, RefMut};
+use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::string::FromUtf8Error;
 use std::{fmt, io, mem, ptr};
 
@@ -45,7 +48,9 @@ mod field;
 
 mod fold;
 
-use self::field::ReadFields;
+use helpers::*;
+
+use self::field::ReadHeaders;
 
 pub use self::field::{Field, FieldHeaders, FieldData};
 
@@ -56,10 +61,9 @@ pub use self::fold::FoldFields;
 // mod hyper;
 
 /// The server-side implementation of `multipart/form-data` requests.
-///
 pub struct Multipart<S: Stream> {
-    stream: BoundaryFinder<S>,
-    fields: field::ReadFields,
+    internal: Rc<Internal<S>>,
+    read_hdr: ReadHeaders
 }
 
 // Q: why can't we just wrap up these bounds into a trait?
@@ -75,42 +79,54 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            stream: BoundaryFinder::new(stream, boundary),
-            fields: ReadFields::new(),
+            internal: Rc::new(Internal::new(stream, boundary)),
+            read_hdr: ReadHeaders,
         }
     }
 
-    /// Poll for the current field in the form-data stream.
-    ///
-    /// This will return the same field until it is read to the end, or `next_field()` is called
-    /// to skip the rest of the current field and begin reading the next one.
-    ///
-    /// To see how this method is meant to be used, see [the implementation of `FoldFields`](fold.html),
-    /// which uses only `poll_field()` and `next_field()`.
-    pub fn poll_field(&mut self) -> Poll<Option<Field<S>>, S::Error> {
-        self.fields.poll_field(&mut self.stream)
+    pub fn on_field(&self) -> bool {
+        self.internal.on_field.get()
+    }
+}
+
+impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
+    type Item = Field<S>;
+    type Error = S::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        if self.internal.on_field.get() { return not_ready(); }
+
+        unimplemented!()
+    }
+}
+
+struct Internal<S: Stream> {
+    stream: RefCell<BoundaryFinder<S>>,
+    on_field: Cell<bool>,
+    waiting_task: Cell<Option<Task>>,
+}
+
+impl<S: Stream> Internal<S> where S::Item: BodyChunk, S::Error: StreamError {
+    fn new(stream: S, boundary: String) -> Self {
+        debug_assert!(boundary.starts_with("--"), "Boundary must start with --");
+
+        Internal {
+            stream: BoundaryFinder::new(stream, boundary).into(),
+            on_field: false.into(),
+            waiting_task: None,
+        }
     }
 
-    /// Skip the rest of the current field, discarding any unread data from its body.
-    ///
-    /// This is also available as a method on `FieldData` (via `Field::data`) to help skirt issues
-    /// with the borrow-checker.
-    pub fn next_field(&mut self) {
-        self.fields.next_field();
+    fn park_curr_task(&self) {
+        self.waiting_task.set(Some(task::current()));
     }
 
-    /// Get a future which runs a closure over all fields in the stream, collecting them to
-    /// some state `T`.
-    ///
-    /// Note that this is not a typical `fold()` implementation which passes the fold state by-value
-    /// and expects it to be returned (or the `futures::Stream` implementation which expects
-    /// a future to be returned for each item). Instead, the closure may be invoked multiple times
-    /// for the same field to completely extract its data, and is passed a mutable reference
-    /// to the state.
-    ///
-    /// Return `Ok(Async::Ready(()))` to go to the next field.
-    pub fn fold_fields<T, F>(self, init: T, folder: F) -> FoldFields<F, T, S> where F: FnMut(&mut T, Field<S>) -> Poll<(), S::Error> {
-        FoldFields { folder, state: init, multipart: self }
+    fn notify_task(&self) {
+        self.waiting_task.take().map(|t| t.notify());
+    }
+
+    fn stream_mut(&self) -> RefMut<BoundaryFinder<S>> {
+        self.stream.borrow_mut()
     }
 }
 
