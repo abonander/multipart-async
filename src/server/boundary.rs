@@ -24,7 +24,6 @@ use helpers::*;
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
-// #[derive(Debug)]
 pub struct BoundaryFinder<S: Stream> {
     stream: S,
     state: State<S::Item>,
@@ -316,6 +315,17 @@ impl<S: Stream> Stream for BoundaryFinder<S> where S::Item: BodyChunk, S::Error:
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.body_chunk()
+    }
+}
+
+impl<S: Stream + fmt::Debug> fmt::Debug for BoundaryFinder<S> where S::Item: BodyChunk + fmt::Debug {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("BoundaryFinder")
+            .field("stream", &self.stream)
+            .field("state", &self.state)
+            .field("boundary", &self.boundary)
+            .field("pushed", &self.pushed)
+            .finish()
     }
 }
 
