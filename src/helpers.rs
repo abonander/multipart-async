@@ -6,12 +6,9 @@
 // copied, modified, or distributed except according to those terms.
 use futures::{Async, Stream};
 
-use std::borrow::Cow;
 use std::error::Error;
 use std::io;
 use std::mem;
-use std::rc::Rc;
-use std::sync::Arc;
 
 pub use display_bytes::display_bytes as show_bytes;
 
@@ -37,42 +34,4 @@ pub fn io_error<E: Into<Box<Error + Send + Sync>>>(e: E) -> io::Error {
 
 pub fn replace_default<T: Default>(dest: &mut T) -> T {
     mem::replace(dest, T::default())
-}
-
-pub struct SomeCell<T> {
-    opt: Option<T>,
-    err: &'static str,
-}
-
-impl<T> SomeCell<T> {
-    pub fn new(val: T, err: &'static str) -> Self {
-        SomeCell {
-            opt: Some(val),
-            err: err,
-        }
-    }
-
-    pub fn try_as_ref(&self) -> io::Result<&T> {
-        self.opt.as_ref().ok_or_else(|| io_error(self.err))
-    }
-
-    pub fn try_as_mut(&mut self) -> io::Result<&mut T> {
-        // Sub-borrow for closure
-        let err = self.err;
-        self.opt.as_mut().ok_or_else(|| io_error(err))
-    }
-
-    pub fn try_take(&mut self) -> io::Result<T> {
-        self.opt.take().ok_or_else(|| io_error(self.err))
-    }
-}
-
-
-impl<S: Stream> Stream for SomeCell<S> where S::Error: From<io::Error> {
-    type Item = S::Item;
-    type Error = S::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.try_as_mut()?.poll()
-    }
 }
