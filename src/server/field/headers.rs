@@ -7,7 +7,7 @@ use std::{io, str};
 use server::{Multipart, BodyChunk, StreamError, httparse, twoway};
 use server::boundary::BoundaryFinder;
 
-use self::httparse::EMPTY_HEADER;
+use self::httparse::{EMPTY_HEADER, Status};
 
 use helpers::*;
 
@@ -99,7 +99,12 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
 
     let mut header_buf = [EMPTY_HEADER; MAX_HEADERS];
 
-    let (_, headers) = httparse::parse_headers(bytes, &mut header_buf).map_err(io_error)?;
+    let headers = match httparse::parse_headers(bytes, &mut header_buf) {
+        Ok(Status::Complete((consume, headers))) => headers,
+        Ok(Status::Partial) => return error(format!("could not parse headers from buffer: {}",
+                                                    show_bytes(bytes))),
+        Err(e) => return error(e),
+    };
 
     let mut out_headers = FieldHeaders::default();
 
@@ -110,7 +115,9 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
 
         match header.name {
             "Content-Disposition" => parse_cont_disp_val(str_val, &mut out_headers)?,
-            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>().map_err(io_error)?),
+            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>()
+                 .map_err(|_| io_error(format!("could not parse MIME type from {:?}", str_val)))?),
+            _ => (),
         }
     }
 
@@ -123,8 +130,8 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> io::Result<()> {
 
     match sections.next() {
         Some("form-data") => (),
-        Some(other) => error(format!("unexpected multipart field Content-Disposition: {}", other))?,
-        None => error("each multipart field requires a Content-Disposition: form-data header")?,
+        Some(other) => return error(format!("unexpected multipart field Content-Disposition: {}", other)),
+        None => return error("each multipart field requires a Content-Disposition: form-data header"),
     }
 
     let mut rem = sections.next().unwrap_or("");
@@ -163,7 +170,8 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
 }
 
 fn param_val(input: &str) -> Option<(&str, &str)> {
-    let mut splits = input.splitn(2, &['"'][..]);
+    let pat: &[char] = &['"'];
+    let mut splits = input.splitn(2, pat);
 
     let token = try_opt!(splits.next()).trim();
 

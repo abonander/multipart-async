@@ -66,6 +66,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
     pub fn another_chunk(&mut self, first: S::Item) -> PollOpt<(S::Item, S::Item), S::Error> {
         match self.body_chunk() {
             Ok(Async::Ready(Some(second))) => ready(Some((first, second))),
+            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
             Ok(Async::NotReady) => { self.push_chunk(first); Ok(Async::NotReady) }
             Err(e) => { self.push_chunk(first); Err(e) },
         }

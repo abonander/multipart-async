@@ -27,7 +27,7 @@ pub use self::headers::{FieldHeaders, ReadHeaders};
 
 pub use self::collect::{ReadFieldText, TextField};
 
-pub fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<S>>) -> Field<S> {
+pub(super) fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<S>>) -> Field<S> {
     let headers = Rc::new(headers);
 
     Field {
