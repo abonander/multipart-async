@@ -19,6 +19,13 @@ pub struct TextField {
     pub text: String,
 }
 
+/// A `Future` which attempts to read a field's data to a string.
+///
+/// ### Warning About Leaks
+/// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some
+/// other mechanism), then the parent `Multipart` will never be able to yield the next field in the
+/// stream. The task waiting on the `Multipart` will also never be notified, which, depending on the
+/// event loop/reactor/executor implementation, may cause a deadlock.
 #[derive(Default)]
 pub struct ReadTextField<S: Stream> {
     data: Option<FieldData<S>>,
@@ -27,7 +34,8 @@ pub struct ReadTextField<S: Stream> {
     pub headers: Rc<FieldHeaders>,
     /// The limit for the string, in bytes, to avoid potential DoS attacks from
     /// attackers running the server out of memory. If an incoming chunk is expected to push the
-    /// string over this limit, an error is returned.
+    /// string over this limit, an error is returned and the offending chunk is pushed back
+    /// to the head of the stream.
     pub limit: usize,
 }
 
@@ -43,7 +51,8 @@ pub fn read_text<S: Stream>(data: FieldData<S>) -> ReadTextField<S> {
 
 impl<S: Stream> ReadTextField<S> {
     /// Set the length limit, in bytes, for the collected text. If an incoming chunk is expected to
-    /// push the string over this limit, an error is returned.
+    /// push the string over this limit, an error is returned and the offending chunk is pushed back
+    /// to the head of the stream.
     ///
     /// Setting a value higher than a few megabytes is not recommended as it could allow an attacker
     /// to DoS the server by running it out of memory, causing it to panic on allocation or spend
@@ -74,8 +83,16 @@ impl<S: Stream> ReadTextField<S> {
     pub fn ref_text(&self) -> &str {
         &self.accum
     }
-}
 
+    /// Destructure this future, taking the internal `FieldData` instance back.
+    ///
+    /// Will be `None` if the field was read to completion, because the internal `FieldData`
+    /// instance is dropped afterwards to allow the parent `Multipart` to immediately start
+    /// working on the next field.
+    pub fn into_data(self) -> Option<FieldData<S>> {
+        self.data
+    }
+}
 
 impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: StreamError {
     type Item = TextField;
@@ -98,8 +115,8 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             // This also catches capacity overflows
             if self.accum.len().saturating_add(chunk.len()) > self.limit {
                 stream.push_chunk(chunk);
-                return Err(StreamError::from_string(format!("String field exceeded limit \
-                                                                       of {} bytes", self.limit)));
+                return Err(StreamError::from_string(format!("Text field {:?} exceeded limit \
+                                                                  of {} bytes", self.headers, self.limit)));
             }
 
             // Try to convert the chunk to UTF-8 and append it to the accumulator
@@ -130,8 +147,17 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
             if second.len() < needed_len {
                 return error(format!("got a chunk smaller than the {} byte(s) needed to finish \
-                                        decoding this UTF-8 sequence: {:?}",
+                                      decoding this UTF-8 sequence: {:?}",
                                      needed_len, first.as_slice()));
+            }
+
+            if self.accum.len().saturating_add(first.len()).saturating_add(second.len()) > self.limit {
+                // push in reverse order
+                stream.push_chunk(second);
+                stream.push_chunk(first);
+                return Err(StreamError::from_string(format!("Text field {:?} exceeded limit \
+                                                             of {} bytes",
+                                                            self.headers, self.limit)));
             }
 
             let mut buf = [0u8; 4];
@@ -155,6 +181,8 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             }
         }
 
+        // Optimization: free the `FieldData` so the parent `Multipart` can yield
+        // the next field.
         self.data = None;
 
         ready(TextField {
