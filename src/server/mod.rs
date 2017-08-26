@@ -22,7 +22,7 @@ use mime::Mime;
 use tempdir::TempDir;
 
 use std::borrow::Borrow;
-use std::cell::{Cell, RefCell, RefMut};
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -57,6 +57,9 @@ pub use self::field::{Field, FieldHeaders, FieldData};
 // mod hyper;
 
 /// The server-side implementation of `multipart/form-data` requests.
+///
+/// This will parse the incoming stream into `Field` which are returned by the
+/// `Stream::poll()` implementation.
 pub struct Multipart<S: Stream> {
     internal: Rc<Internal<S>>,
     read_hdr: ReadHeaders
@@ -64,7 +67,7 @@ pub struct Multipart<S: Stream> {
 
 // Q: why can't we just wrap up these bounds into a trait?
 // A: https://github.com/rust-lang/rust/issues/24616#issuecomment-112065997
-// (The workaround mentioned below doesn't seem to be worth the added complexity)
+// (The workaround mentioned in a later comment doesn't seem to be worth the added complexity)
 impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// Construct a new `Multipart` with the given body reader and boundary.
     /// This will prepend the requisite `"--"` to the boundary.
@@ -79,22 +82,25 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
             read_hdr: ReadHeaders::default(),
         }
     }
-
-    pub fn on_field(&self) -> bool {
-        self.internal.on_field.get()
-    }
 }
 
 impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
     type Item = Field<S>;
     type Error = S::Error;
 
+    /// Returns fields until the end of the stream.
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if self.internal.on_field.get() { return not_ready(); }
+        // FIXME: combine this with the next statement when non-lexical lifetimes are added
+        // shouldn't be an issue anyway because the optimizer can fold these checks together
+        if Rc::get_mut(&mut self.internal).is_none() {
+            self.internal.park_curr_task();
+            return not_ready();
+        }
 
-        let mut stream = self.internal.stream_mut();
+        // We don't want to return another `Field` unless we have exclusive access.
+        let stream = Rc::get_mut(&mut self.internal).unwrap().stream.get_mut();
 
-        let headers = match try_ready!(self.read_hdr.read_headers(&mut stream)) {
+        let headers = match try_ready!(self.read_hdr.read_headers(stream)) {
             Some(headers) => headers,
             None => return ready(None),
         };
@@ -104,8 +110,7 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
 }
 
 struct Internal<S: Stream> {
-    stream: RefCell<BoundaryFinder<S>>,
-    on_field: Cell<bool>,
+    stream: Cell<BoundaryFinder<S>>,
     waiting_task: Cell<Option<Task>>,
 }
 
@@ -115,7 +120,6 @@ impl<S: Stream> Internal<S> {
 
         Internal {
             stream: BoundaryFinder::new(stream, boundary).into(),
-            on_field: false.into(),
             waiting_task: None.into(),
         }
     }
@@ -126,10 +130,6 @@ impl<S: Stream> Internal<S> {
 
     fn notify_task(&self) {
         self.waiting_task.take().map(|t| t.notify());
-    }
-
-    fn stream_mut(&self) -> RefMut<BoundaryFinder<S>> {
-        self.stream.borrow_mut()
     }
 }
 

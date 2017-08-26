@@ -189,3 +189,12 @@ fn param_val(input: &str) -> Option<(&str, &str)> {
 
     Some((qstr, rem))
 }
+
+#[test]
+fn test_header_end_split() {
+    assert_eq!(header_end_split(b"\r\n\r", b"\n"), Some(1));
+    assert_eq!(header_end_split(b"\r\n", b"\r\n"), Some(2));
+    assert_eq!(header_end_split(b"\r", b"\n\r\n"), Some(3));
+    assert_eq!(header_end_split(b"\r\n\r\n", b"FOOBAR"), None);
+    assert_eq!(header_end_split(b"FOOBAR", b"\r\n\r\n"), None);
+}

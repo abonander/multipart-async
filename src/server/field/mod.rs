@@ -44,6 +44,7 @@ pub struct Field<S: Stream> {
     pub data: FieldData<S>,
 }
 
+// N.B.: must **never** be Clone!
 pub struct FieldData<S: Stream> {
     headers: Rc<FieldHeaders>,
     internal: Rc<Internal<S>>,
@@ -76,6 +77,15 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
 
         collect::read_text(self, limit)
     }
+
+    fn stream_mut(&mut self) -> &mut BoundaryFinder<S> {
+        debug_assert!(Rc::strong_count(&self.internal) <= 2,
+                      "More than two copies of an `Rc<Internal>` at one time");
+
+        // This is safe as we have guaranteed exclusive access, the lifetime is tied to `self`,
+        // and is never null.
+        unsafe { &mut *self.internal.stream.as_ptr() }
+    }
 }
 
 impl<S: Stream> Stream for FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
@@ -83,22 +93,6 @@ impl<S: Stream> Stream for FieldData<S> where S::Item: BodyChunk, S::Error: Stre
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.internal.stream_mut().body_chunk()
+        self.stream_mut().body_chunk()
     }
-}
-
-impl<S: Stream> Drop for FieldData<S> {
-    fn drop(&mut self) {
-        self.internal.on_field.set(false);
-        self.internal.notify_task();
-    }
-}
-
-#[test]
-fn test_header_end_split() {
-    assert_eq!(header_end_split(b"\r\n\r", b"\n"), Some(1));
-    assert_eq!(header_end_split(b"\r\n", b"\r\n"), Some(2));
-    assert_eq!(header_end_split(b"\r", b"\n\r\n"), Some(3));
-    assert_eq!(header_end_split(b"\r\n\r\n", b"FOOBAR"), None);
-    assert_eq!(header_end_split(b"FOOBAR", b"\r\n\r\n"), None);
 }

@@ -33,11 +33,11 @@ pub fn read_text<S: Stream>(data: FieldData<S>, limit: Option<usize>) -> ReadFie
 impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError {
     fn poll_(&mut self) -> Poll<TextField, S::Error> {
         let data = match self.data {
-            Some(ref data) => data,
+            Some(ref mut data) => data,
             None => return not_ready(),
         };
 
-        let mut stream = data.internal.stream_mut();
+        let mut stream = data.stream_mut();
 
         loop {
             let chunk = match try_ready!(stream.body_chunk()) {
