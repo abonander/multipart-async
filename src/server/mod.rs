@@ -98,11 +98,13 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
         }
 
         // We don't want to return another `Field` unless we have exclusive access.
-        let stream = Rc::get_mut(&mut self.internal).unwrap().stream.get_mut();
+        let headers = {
+            let stream = Rc::get_mut(&mut self.internal).unwrap().stream.get_mut();
 
-        let headers = match try_ready!(self.read_hdr.read_headers(stream)) {
-            Some(headers) => headers,
-            None => return ready(None),
+            match try_ready!(self.read_hdr.read_headers(stream)) {
+                Some(headers) => headers,
+                None => return ready(None),
+            }
         };
 
         ready(field::new_field(headers, self.internal.clone()))
