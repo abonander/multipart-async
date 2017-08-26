@@ -11,47 +11,95 @@ use super::{FieldHeaders, FieldData};
 
 use helpers::*;
 
+/// The result of reading a `Field` to text.
 pub struct TextField {
+    /// The headers for the original field, provided as a convenience.
     pub headers: Rc<FieldHeaders>,
+    /// The text of the field.
     pub text: String,
 }
 
 #[derive(Default)]
-pub struct ReadFieldText<S: Stream> {
+pub struct ReadTextField<S: Stream> {
     data: Option<FieldData<S>>,
     accum: String,
+    /// The headers for the original field, provided as a convenience.
     pub headers: Rc<FieldHeaders>,
-    pub limit: Option<usize>,
+    /// The limit for the string, in bytes, to avoid potential DoS attacks from
+    /// attackers running the server out of memory. If an incoming chunk is expected to push the
+    /// string over this limit, an error is returned.
+    pub limit: usize,
 }
 
-pub fn read_text<S: Stream>(data: FieldData<S>, limit: Option<usize>) -> ReadFieldText<S> {
-    ReadFieldText {
-        headers: data.headers.clone(), data: Some(data), limit, accum: String::new()
+// RFC on these numbers, they're pretty much arbitrary
+const DEFAULT_LIMIT: usize = 65536; // 65KiB--reasonable enough for one field, right?
+const MAX_LIMIT: usize = 16_777_216; // 16MiB--highest sane value for one field, IMO
+
+pub fn read_text<S: Stream>(data: FieldData<S>) -> ReadTextField<S> {
+    ReadTextField {
+        headers: data.headers.clone(), data: Some(data), limit: DEFAULT_LIMIT, accum: String::new()
     }
 }
 
-impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError {
-    fn poll_(&mut self) -> Poll<TextField, S::Error> {
-        let data = match self.data {
-            Some(ref mut data) => data,
-            None => return not_ready(),
-        };
+impl<S: Stream> ReadTextField<S> {
+    /// Set the length limit, in bytes, for the collected text. If an incoming chunk is expected to
+    /// push the string over this limit, an error is returned.
+    ///
+    /// Setting a value higher than a few megabytes is not recommended as it could allow an attacker
+    /// to DoS the server by running it out of memory, causing it to panic on allocation or spend
+    /// forever swapping pagefiles to disk. Remember that this limit is only for a single field
+    /// as well.
+    ///
+    /// Setting this to `usize::MAX` is equivalent to removing the limit as the string
+    /// would overflow its capacity value anyway.
+    pub fn limit(self, limit: usize) -> Self {
+        Self { limit, .. self}
+    }
 
-        let mut stream = data.stream_mut();
+    /// Soft max limit if the default isn't large enough.
+    ///
+    /// Going higher than this is allowed, but not recommended.
+    pub fn limit_max(self) -> Self {
+        self.limit(MAX_LIMIT)
+    }
 
+    /// Take the text that has been collected so far, leaving an empty string in its place.
+    ///
+    /// If the length limit was hit, this allows the field to continue being read.
+    pub fn take_string(&mut self) -> String {
+        replace_default(&mut self.accum)
+    }
+
+    /// The text that has been collected so far.
+    pub fn ref_text(&self) -> &str {
+        &self.accum
+    }
+}
+
+
+impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: StreamError {
+    type Item = TextField;
+    type Error = S::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, S::Error> {
         loop {
+            let data = match self.data {
+                Some(ref mut data) => data,
+                None => return not_ready(),
+            };
+
+            let mut stream = data.stream_mut();
+
             let chunk = match try_ready!(stream.body_chunk()) {
                 Some(val) => val,
                 N => break,
             };
 
-            if let Some(limit) = self.limit {
-                // This also catches capacity overflows but only when a limit is set
-                if self.accum.len().saturating_add(chunk.len()) > limit {
-                    stream.push_chunk(chunk);
-                    return Err(StreamError::from_string(format!("String field exceeded limit \
-                                                                       of {} bytes", limit)));
-                }
+            // This also catches capacity overflows
+            if self.accum.len().saturating_add(chunk.len()) > self.limit {
+                stream.push_chunk(chunk);
+                return Err(StreamError::from_string(format!("String field exceeded limit \
+                                                                       of {} bytes", self.limit)));
             }
 
             // Try to convert the chunk to UTF-8 and append it to the accumulator
@@ -59,7 +107,7 @@ impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError
                 Ok(s) => { self.accum.push_str(s); continue },
                 Err(e) => match e.error_len() {
                     // a non-null `error_len` means there was an invalid byte sequence
-                    Some(_) => return error(e),
+                    Some(_) => return Err(StreamError::from_utf8(e)),
                     // otherwise, it just means that there was a byte sequence cut off by a
                     // chunk boundary
                     None => e.valid_up_to(),
@@ -95,7 +143,7 @@ impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError
             let split_idx = match str::from_utf8(&buf) {
                 Ok(s) => { self.accum.push_str(s); needed_len },
                 Err(e) => match e.error_len() {
-                    Some(_) => return error(e),
+                    Some(_) => return utf8_err(e),
                     None => e.valid_up_to(),
                 }
             };
@@ -107,30 +155,16 @@ impl<S: Stream> ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError
             }
         }
 
+        self.data = None;
+
         ready(TextField {
             headers: self.headers.clone(),
-            text: replace_default(&mut self.accum)
+            text: self.take_string(),
         })
     }
 }
 
-impl<S: Stream> Future for ReadFieldText<S> where S::Item: BodyChunk, S::Error: StreamError {
-    type Item = TextField;
-    type Error = S::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, S::Error> {
-        let res = self.poll_();
-
-        // Drop `FieldData` so it can free up a blocked task to process the next field
-        if let Ok(Ready(_)) = res {
-            self.data = None;
-        }
-
-        res
-    }
-}
-
-impl<S: Stream> fmt::Debug for ReadFieldText<S> {
+impl<S: Stream> fmt::Debug for ReadTextField<S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ReadFieldText")
             .field("accum", &self.accum)

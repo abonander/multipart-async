@@ -15,7 +15,7 @@ use std::fmt;
 use std::io;
 use std::mem;
 
-use super::BodyChunk;
+use super::{BodyChunk, StreamError};
 
 use self::State::*;
 
@@ -42,7 +42,7 @@ impl<S: Stream> BoundaryFinder<S> {
     }
 }
 
-impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
+impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamError {
 
     pub fn push_chunk(&mut self, chunk: S::Item) {
         debug_assert!(twoway::find_bytes(chunk.as_slice(), &self.boundary).is_none(),
@@ -309,7 +309,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::E
     }
 }
 
-impl<S: Stream> Stream for BoundaryFinder<S> where S::Item: BodyChunk, S::Error: From<io::Error> {
+impl<S: Stream> Stream for BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamError {
     type Item = S::Item;
     type Error = S::Error;
 

@@ -1,6 +1,6 @@
 use futures::{Poll, Stream};
 
-use mime::Mime;
+use mime::{self, Mime};
 
 use std::{io, str};
 
@@ -17,8 +17,26 @@ const MAX_HEADERS: usize = 4;
 #[derive(Clone, Default, Debug)]
 pub struct FieldHeaders {
     pub name: String,
-    pub cont_type: Option<Mime>,
     pub filename: Option<String>,
+    pub content_type: Option<Mime>,
+}
+
+impl FieldHeaders {
+    /// `true` if `content_type` is `None` or `text/*` (such as `text/plain`).
+    ///
+    /// **Note**: this does not guarantee that it is compatible with `FieldData::read_text()`;
+    /// if you intend to support more than just ASCII/UTF-8 you will want to look into a more robust
+    /// implementation.
+    pub fn is_text(&self) -> bool {
+        self.content_type.as_ref().map_or(true, |ct| ct.type_() == mime::TEXT)
+    }
+
+    /* TODO: when https://github.com/hyperium/mime/pull/60 is merged
+    /// The character set of this field, if provided.
+    pub fn charset(&self) -> Option<&str> {
+        self.content_type.as_ref().and_then(|ct| ct.get_param(mime::CHARSET)).map(Into::into)
+    }
+    */
 }
 
 #[derive(Debug, Default)]
@@ -79,8 +97,6 @@ fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
         first.len() >= start && first[first.len() - start ..].iter().chain(second).take(4).eq(CRLF2)
     }
 
-    let len = first.len();
-
     if split_subcheck(3, first, second) {
         Some(1)
     } else if split_subcheck(2, first, second) {
@@ -92,7 +108,7 @@ fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
     }
 }
 
-fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
+fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
     debug_assert!(bytes.ends_with(b"\r\n\r\n"),
                   "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
                   show_bytes(bytes));
@@ -100,23 +116,22 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
     let mut header_buf = [EMPTY_HEADER; MAX_HEADERS];
 
     let headers = match httparse::parse_headers(bytes, &mut header_buf) {
-        Ok(Status::Complete((consume, headers))) => headers,
-        Ok(Status::Partial) => return error(format!("could not parse headers from buffer: {}",
-                                                    show_bytes(bytes))),
-        Err(e) => return error(e),
+        Ok(Status::Complete((_, headers))) => headers,
+        Ok(Status::Partial) => ret_err!("field headers incomplete: {}", show_bytes(bytes)),
+        Err(e) => ret_err!("error parsing headers: {}; from buffer: {}", e, show_bytes(bytes)),
     };
 
     let mut out_headers = FieldHeaders::default();
 
     for header in headers {
         let str_val = str::from_utf8(header.value)
-            .map_err(|_| io_error("multipart field headers must be UTF-8 encoded"))?
+            .or_else(|_| error("multipart field headers must be UTF-8 encoded"))?
             .trim();
 
         match header.name {
             "Content-Disposition" => parse_cont_disp_val(str_val, &mut out_headers)?,
-            "Content-Type" => out_headers.cont_type = Some(str_val.parse::<Mime>()
-                 .map_err(|_| io_error(format!("could not parse MIME type from {:?}", str_val)))?),
+            "Content-Type" => out_headers.content_type = Some(str_val.parse::<Mime>()
+                 .or_else(|_| ret_err!("could not parse MIME type from {:?}", str_val))?),
             _ => (),
         }
     }
@@ -124,13 +139,13 @@ fn parse_headers(bytes: &[u8]) -> io::Result<FieldHeaders> {
     Ok(out_headers)
 }
 
-fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> io::Result<()> {
+fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Result<(), E> {
     // Only take the first section, the rest can be in quoted strings that we want to handle
     let mut sections = val.splitn(1, ';').map(str::trim);
 
     match sections.next() {
         Some("form-data") => (),
-        Some(other) => return error(format!("unexpected multipart field Content-Disposition: {}", other)),
+        Some(other) => ret_err!("unexpected multipart field Content-Disposition: {}", other),
         None => return error("each multipart field requires a Content-Disposition: form-data header"),
     }
 
@@ -142,12 +157,12 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> io::Result<()> {
         match key {
             "name" => out.name = val.to_string(),
             "filename" => out.filename = Some(val.to_string()),
-            other => debug!("unknown key-value pair in Content-Disposition: {:?} = {:?}", key, val),
+            _ => debug!("unknown key-value pair in Content-Disposition: {:?} = {:?}", key, val),
         }
     }
 
     if out.name.is_empty() {
-        return error(format!("expected 'name' attribute in Content-Disposition: {}", val));
+        return ret_err!("expected 'name' attribute in Content-Disposition: {}", val);
     }
 
     Ok(())

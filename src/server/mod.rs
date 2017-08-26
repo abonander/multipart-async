@@ -28,7 +28,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::string::FromUtf8Error;
+use std::str::Utf8Error;
 use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryFinder;
@@ -42,6 +42,14 @@ macro_rules! try_opt (
     )
 );
 
+macro_rules! ret_err (
+    ($string:expr) => (
+        return ::helpers::error($string);
+    );
+    ($string:expr, $($args:tt)*) => (
+        return ::helpers::error(format!($string, $($args)*));
+    );
+);
 
 mod boundary;
 mod field;
@@ -188,13 +196,30 @@ impl<'a> BodyChunk for &'a [u8] {
 }
 
 /// The operations required from a body stream's `Error` type.
-pub trait StreamError: From<io::Error> + From<FromUtf8Error> {
+pub trait StreamError: From<io::Error> {
+    /// Wrap a static string into this error type.
+    ///
+    /// Goes through `io::Error` by default.
+    fn from_str(str: &'static str) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, str).into()
+    }
+
+    /// Wrap a dynamic string into this error type.
+    ///
+    /// Goes through `io::Error` by default.
     fn from_string(string: String) -> Self {
         io::Error::new(io::ErrorKind::InvalidData, string).into()
     }
+
+    /// Wrap a `std::str::Utf8Error` into this error type.
+    ///
+    /// Goes through `io::Error` by default.
+    fn from_utf8(err: Utf8Error) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, err).into()
+    }
 }
 
-impl<E> StreamError for E where E: From<io::Error> + From<FromUtf8Error> {}
+impl<E> StreamError for E where E: From<io::Error> {}
 
 //impl StreamError for String {
 //    fn from_string(string: String) -> Self { string }
