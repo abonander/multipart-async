@@ -31,7 +31,6 @@ extern crate display_bytes;
 #[macro_use]
 extern crate futures;
 
-extern crate mime;
 extern crate mime_guess;
 extern crate rand;
 
@@ -39,6 +38,8 @@ extern crate tempdir;
 
 #[cfg(feature = "hyper")]
 extern crate hyper;
+
+pub extern crate mime;
 
 use rand::Rng;
 
