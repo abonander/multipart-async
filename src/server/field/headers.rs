@@ -1,6 +1,6 @@
 use futures::{Poll, Stream};
 
-use mime::{self, Mime};
+use mime::{self, Mime, Name};
 
 use std::{io, str};
 
