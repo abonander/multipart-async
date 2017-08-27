@@ -58,7 +58,7 @@ use helpers::*;
 
 use self::field::ReadHeaders;
 
-pub use self::field::{Field, FieldHeaders, FieldData};
+pub use self::field::{Field, FieldHeaders, FieldData, ReadTextField, TextField};
 
 // FIXME: hyper integration once API is in place
 // #[cfg(feature = "hyper")]
@@ -66,8 +66,13 @@ pub use self::field::{Field, FieldHeaders, FieldData};
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
-/// This will parse the incoming stream into `Field` which are returned by the
-/// `Stream::poll()` implementation.
+/// This will parse the incoming stream into `Field` instances via its
+/// `Stream` implementation.
+///
+/// To maintain consistency in the underlying stream, this will not yield more than one
+/// `Field` at a time. A `Drop` implementation on `FieldData` is used to signal
+/// when it's time to move forward, so do avoid leaking that type or anything which contains it
+/// (`Field`, `ReadTextField`, or any stream combinators).
 pub struct Multipart<S: Stream> {
     internal: Rc<Internal<S>>,
     read_hdr: ReadHeaders
@@ -78,7 +83,9 @@ pub struct Multipart<S: Stream> {
 // (The workaround mentioned in a later comment doesn't seem to be worth the added complexity)
 impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// Construct a new `Multipart` with the given body reader and boundary.
-    /// This will prepend the requisite `"--"` to the boundary.
+    ///
+    /// This will add the requisite `--` and CRLF (`\r\n`) to the boundary as per
+    /// [IETF RFC 7578 section 4.1](https://tools.ietf.org/html/rfc7578#section-4.1).
     pub fn with_body<B: Into<String>>(stream: S, boundary: B) -> Self {
         let mut boundary = boundary.into();
         boundary.insert_str(0, "--");
@@ -96,7 +103,6 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
     type Item = Field<S>;
     type Error = S::Error;
 
-    /// Returns fields until the end of the stream.
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         // FIXME: combine this with the next statement when non-lexical lifetimes are added
         // shouldn't be an issue anyway because the optimizer can fold these checks together

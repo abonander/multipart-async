@@ -12,6 +12,7 @@ use super::{FieldHeaders, FieldData};
 use helpers::*;
 
 /// The result of reading a `Field` to text.
+#[derive(Clone, Debug)]
 pub struct TextField {
     /// The headers for the original field, provided as a convenience.
     pub headers: Rc<FieldHeaders>,
@@ -20,6 +21,14 @@ pub struct TextField {
 }
 
 /// A `Future` which attempts to read a field's data to a string.
+///
+/// ### Charset
+/// For simplicity, the default UTF-8 character set is assumed, as defined in
+/// [IETF RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
+/// If the field body cannot be decoded as UTF-8, an error is returned.
+///
+/// Decoding text in a different charset (except ASCII and ISO/IEC-8859-1 which
+/// are compatible with UTF-8) is, currently, beyond the scope of this crate.
 ///
 /// ### Warning About Leaks
 /// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some

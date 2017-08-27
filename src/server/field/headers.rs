@@ -29,7 +29,7 @@ pub struct FieldHeaders {
     /// ### Special Value: `_charset_`
     /// If the client intended a different character set than UTF-8 for its text values, it may
     /// provide the name of the charset as a text field (ASCII-encoded) with the name `_charset_`.
-    /// See [IEEE RFC 7578, Section 4.6](https://tools.ietf.org/html/rfc7578#section-4.6) for more.
+    /// See [IETF RFC 7578, Section 4.6](https://tools.ietf.org/html/rfc7578#section-4.6) for more.
     ///
     /// Alternately, the charset can be provided for an individual field as a `charset` parameter
     /// to its `Content-Type` header; see the `charset()` method for a conventient wrapper.

@@ -43,7 +43,8 @@ pub(super) fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<
 ///
 /// To avoid the next field being initialized before this one is done being read
 /// (in a linear stream), only one instance per `Multipart` instance is allowed at a time.
-/// A `Drop` implementation is used to notify `Multipart` that this field is done being read, thus:
+/// A `Drop` implementation on `FieldData` is used to notify `Multipart` that this field is done
+/// being read, thus:
 ///
 /// ### Warning About Leaks
 /// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some
@@ -85,11 +86,11 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
     ///
     /// ### Charset
     /// For simplicity, the default UTF-8 character set is assumed, as defined in
-    /// [RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
+    /// [IETF RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
     /// If the field body cannot be decoded as UTF-8, an error is returned.
     ///
-    /// If you want to decode text in a different charset (except ASCII and ISO/IEC-8859-1 which
-    /// are compatible with UTF-8), you will need to implement it yourself.
+    /// Decoding text in a different charset (except ASCII and ISO/IEC-8859-1 which
+    /// are compatible with UTF-8) is, currently, beyond the scope of this crate.
     pub fn read_text(self) -> ReadTextField<S> {
         if !self.headers.is_text() {
             debug!("attempting to read a non-text field as text: {:?}", self.headers);
