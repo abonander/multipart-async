@@ -162,7 +162,7 @@ fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Res
     }
 
     if out.name.is_empty() {
-        return ret_err!("expected 'name' attribute in Content-Disposition: {}", val);
+        ret_err!("expected 'name' attribute in Content-Disposition: {}", val);
     }
 
     Ok(())

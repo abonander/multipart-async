@@ -109,7 +109,7 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
             let chunk = match try_ready!(stream.body_chunk()) {
                 Some(val) => val,
-                N => break,
+                _ => break,
             };
 
             // This also catches capacity overflows
