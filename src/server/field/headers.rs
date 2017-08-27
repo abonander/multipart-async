@@ -14,10 +14,31 @@ use helpers::*;
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
 
+/// The headers of a `Field`, including the name, filename, and `Content-Type`, if provided.
+///
+/// ### Note: Untrustworthy
+/// These values are provided directly by the client, and as such, should be considered
+/// *untrustworthy* and potentially **dangerous**. Avoid any unsanitized usage on the filesystem
+/// or in a shell or database, or performing unsafe operations with the assumption of a
+/// certain file type. Sanitizing/verifying these values is (currently) beyond the scope of this
+/// crate.
 #[derive(Clone, Default, Debug)]
 pub struct FieldHeaders {
+    /// The name of the field as provided by the client.
+    ///
+    /// ### Special Value: `_charset_`
+    /// If the client intended a different character set than UTF-8 for its text values, it may
+    /// provide the name of the charset as a text field (ASCII-encoded) with the name `_charset_`.
+    /// See [IEEE RFC 7578, Section 4.6](https://tools.ietf.org/html/rfc7578#section-4.6) for more.
+    ///
+    /// Alternately, the charset can be provided for an individual field as a `charset` parameter
+    /// to its `Content-Type` header; see the `charset()` method for a conventient wrapper.
     pub name: String,
+    /// The name of the file as it was on the client. If not provided, it may still have been a
+    /// file field.
     pub filename: Option<String>,
+    /// The `Content-Type` of this field, as provided by the client. If `None`, then the field
+    /// is probably text, but this is not guaranteed.
     pub content_type: Option<Mime>,
 }
 
@@ -25,18 +46,16 @@ impl FieldHeaders {
     /// `true` if `content_type` is `None` or `text/*` (such as `text/plain`).
     ///
     /// **Note**: this does not guarantee that it is compatible with `FieldData::read_text()`;
-    /// if you intend to support more than just ASCII/UTF-8 you will want to look into a more robust
-    /// implementation.
+    /// supporting more encodings than ASCII/ISO-8859/UTF-8 is (currently) beyond the scope
+    /// of this crate.
     pub fn is_text(&self) -> bool {
         self.content_type.as_ref().map_or(true, |ct| ct.type_() == mime::TEXT)
     }
 
-    /* TODO: when https://github.com/hyperium/mime/pull/60 is merged
     /// The character set of this field, if provided.
-    pub fn charset(&self) -> Option<&str> {
-        self.content_type.as_ref().and_then(|ct| ct.get_param(mime::CHARSET)).map(Into::into)
+    pub fn charset(&self) -> Option<Name> {
+        self.content_type.as_ref().and_then(|ct| ct.get_param(mime::CHARSET))
     }
-    */
 }
 
 #[derive(Debug, Default)]

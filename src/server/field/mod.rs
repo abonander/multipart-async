@@ -88,8 +88,8 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// [RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
     /// If the field body cannot be decoded as UTF-8, an error is returned.
     ///
-    /// If you want to decode text in a different charset (except ASCII which is compatible with
-    /// UTF-8), you will need to implement it yourself.
+    /// If you want to decode text in a different charset (except ASCII and ISO/IEC-8859-1 which
+    /// are compatible with UTF-8), you will need to implement it yourself.
     pub fn read_text(self) -> ReadTextField<S> {
         if !self.headers.is_text() {
             debug!("attempting to read a non-text field as text: {:?}", self.headers);
