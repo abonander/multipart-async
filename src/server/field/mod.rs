@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::{io, mem, str};
 
 use server::boundary::BoundaryFinder;
-use server::{Internal, BodyChunk, StreamError, Multipart, httparse, twoway};
+use server::{Internal, BodyChunk, StreamError, httparse};
 
 use helpers::*;
 
@@ -41,6 +41,8 @@ pub(super) fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<
 
 /// A single field in a multipart stream.
 ///
+/// The data of the field is provided as a `Stream` impl in the `data` field.
+///
 /// To avoid the next field being initialized before this one is done being read
 /// (in a linear stream), only one instance per `Multipart` instance is allowed at a time.
 /// A `Drop` implementation on `FieldData` is used to notify `Multipart` that this field is done
@@ -60,6 +62,13 @@ pub struct Field<S: Stream> {
 }
 
 /// The data of a field in a multipart stream, as a stream of chunks.
+///
+/// It may be read to completion via the `Stream` impl, or collected to a string with `read_text()`.
+///
+/// To avoid the next field being initialized before this one is done being read
+/// (in a linear stream), only one instance per `Multipart` instance is allowed at a time.
+/// A `Drop` implementation on `FieldData` is used to notify `Multipart` that this field is done
+/// being read, thus:
 ///
 /// ### Warning About Leaks
 /// If this value is leaked (via `mem::forget()` or some other mechanism), then the parent

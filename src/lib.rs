@@ -4,7 +4,8 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-//! Client- and server-side abstractions for HTTP `multipart/form-data` requests.
+//! Client- and server-side abstractions for HTTP `multipart/form-data` requests using asynchronous
+//! I/O.
 //!
 //! Features: 
 //! 
@@ -16,12 +17,6 @@
 //!
 //! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library 
 //! for client and/or server depending on which other feature flags are set.
-//!
-//! * `iron`: Enable integration with the [Iron](http://ironframework.io) web application
-//! framework. See the [`server::iron`](server/iron/index.html) module for more information.
-//!
-//! * `tiny_http`: Enable integration with the [`tiny_http`](https://github.com/frewsxcv/tiny-http)
-//! crate. See the [`server::tiny_http`](server/tiny_http/index.html) module for more information.
 #![warn(missing_docs)]
 #[macro_use] extern crate log;
 extern crate env_logger;
