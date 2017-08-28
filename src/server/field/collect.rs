@@ -27,8 +27,8 @@ pub struct TextField {
 /// [IETF RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
 /// If the field body cannot be decoded as UTF-8, an error is returned.
 ///
-/// Decoding text in a different charset (except ASCII and ISO/IEC-8859-1 which
-/// are compatible with UTF-8) is, currently, beyond the scope of this crate.
+/// Decoding text in a different charset (except ASCII which is compatible with UTF-8) is,
+/// currently, beyond the scope of this crate.
 ///
 /// ### Warning About Leaks
 /// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some
@@ -151,22 +151,21 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             // Get a second chunk or push the first chunk back
             let (first, second) = match try_ready!(stream.another_chunk(invalid)) {
                 Some(pair) => pair,
-                None => return error("unexpected end of stream while decoding a UTF-8 sequence"),
+                None => ret_err!("unexpected end of stream while decoding a UTF-8 sequence"),
             };
 
             if second.len() < needed_len {
-                return error(format!("got a chunk smaller than the {} byte(s) needed to finish \
+                ret_err!("got a chunk smaller than the {} byte(s) needed to finish \
                                       decoding this UTF-8 sequence: {:?}",
-                                     needed_len, first.as_slice()));
+                                     needed_len, first.as_slice());
             }
 
             if self.accum.len().saturating_add(first.len()).saturating_add(second.len()) > self.limit {
-                // push in reverse order
+                // push chunks in reverse order
                 stream.push_chunk(second);
                 stream.push_chunk(first);
-                return Err(StreamError::from_string(format!("Text field {:?} exceeded limit \
-                                                             of {} bytes",
-                                                            self.headers, self.limit)));
+                return ret_err!("Text field {:?} exceeded limit of {} bytes",
+                                self.headers, self.limit);
             }
 
             let mut buf = [0u8; 4];

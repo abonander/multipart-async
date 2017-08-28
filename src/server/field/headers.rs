@@ -45,9 +45,9 @@ pub struct FieldHeaders {
 impl FieldHeaders {
     /// `true` if `content_type` is `None` or `text/*` (such as `text/plain`).
     ///
-    /// **Note**: this does not guarantee that it is compatible with `FieldData::read_text()`;
-    /// supporting more encodings than ASCII/ISO-8859/UTF-8 is (currently) beyond the scope
-    /// of this crate.
+    /// **Note**: this does not guarantee that the field data is compatible with
+    /// `FieldData::read_text()`; supporting more encodings than ASCII/UTF-8 is (currently)
+    /// beyond the scope of this crate.
     pub fn is_text(&self) -> bool {
         self.content_type.as_ref().map_or(true, |ct| ct.type_() == mime::TEXT)
     }
