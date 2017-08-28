@@ -17,7 +17,7 @@
 //!
 //! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library 
 //! for client and/or server depending on which other feature flags are set.
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 #[macro_use] extern crate log;
 extern crate env_logger;
 

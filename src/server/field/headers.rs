@@ -32,7 +32,7 @@ pub struct FieldHeaders {
     /// See [IETF RFC 7578, Section 4.6](https://tools.ietf.org/html/rfc7578#section-4.6) for more.
     ///
     /// Alternately, the charset can be provided for an individual field as a `charset` parameter
-    /// to its `Content-Type` header; see the `charset()` method for a conventient wrapper.
+    /// to its `Content-Type` header; see the `charset()` method for a convenient wrapper.
     pub name: String,
     /// The name of the file as it was on the client. If not provided, it may still have been a
     /// file field.
