@@ -9,9 +9,7 @@ description = "A backend-agnostic extension for asynchronous HTTP libraries that
 
 keywords = ["form-data", "hyper", "async", "http", "upload"]
 
-repository = "http://github.com/cybergeek94/multipart-async"
-
-documentation = "http://cybergeek94.github.io/multipart-async/doc/multipart-async/index.html"
+repository = "http://github.com/abonander/multipart-async"
 
 license = "MIT OR Apache-2.0"
 
