@@ -99,7 +99,10 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// If the field body cannot be decoded as UTF-8, an error is returned.
     ///
     /// Decoding text in a different charset (except ASCII which
-    /// is compatible with UTF-8) is, currently, beyond the scope of this crate.
+    /// is compatible with UTF-8) is, currently, beyond the scope of this crate. However, as a
+    /// convention, web browsers will send `multipart/form-data` requests in the same
+    /// charset as that of the document (page or frame) containing the form, so if you only serve
+    /// ASCII/UTF-8 pages then you won't have to worry too much about decoding strange charsets.
     pub fn read_text(self) -> ReadTextField<S> {
         if !self.headers.is_text() {
             debug!("attempting to read a non-text field as text: {:?}", self.headers);

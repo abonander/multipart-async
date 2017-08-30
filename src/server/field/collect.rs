@@ -2,7 +2,9 @@ use futures::{Future, Stream};
 use futures::Async::*;
 
 use std::rc::Rc;
+use std::str::Utf8Error;
 use std::{fmt, str};
+
 
 use server::boundary::BoundaryFinder;
 use server::{Internal, BodyChunk, StreamError};
@@ -28,7 +30,10 @@ pub struct TextField {
 /// If the field body cannot be decoded as UTF-8, an error is returned.
 ///
 /// Decoding text in a different charset (except ASCII which is compatible with UTF-8) is,
-/// currently, beyond the scope of this crate.
+/// currently, beyond the scope of this crate. However, as a convention, web browsers will send
+/// `multipart/form-data` requests in the same charset as that of the document (page or frame)
+/// containing the form, so if you only serve ASCII/UTF-8 pages then you won't have to worry
+/// too much about decoding strange charsets.
 ///
 /// ### Warning About Leaks
 /// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some
@@ -124,19 +129,19 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             // This also catches capacity overflows
             if self.accum.len().saturating_add(chunk.len()) > self.limit {
                 stream.push_chunk(chunk);
-                return Err(StreamError::from_string(format!("Text field {:?} exceeded limit \
-                                                                  of {} bytes", self.headers, self.limit)));
+                ret_err!("Text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
             }
 
             // Try to convert the chunk to UTF-8 and append it to the accumulator
             let split_idx = match str::from_utf8(chunk.as_slice()) {
                 Ok(s) => { self.accum.push_str(s); continue },
-                Err(e) => match e.error_len() {
-                    // a non-null `error_len` means there was an invalid byte sequence
-                    Some(_) => return Err(StreamError::from_utf8(e)),
-                    // otherwise, it just means that there was a byte sequence cut off by a
+                Err(e) => if should_continue(&e, chunk.as_slice()) {
+                    // this error just means that there was a byte sequence cut off by a
                     // chunk boundary
-                    None => e.valid_up_to(),
+                    e.valid_up_to()
+                } else {
+                    // otherwise, there was an invalid byte sequence
+                    return utf8_err(e);
                 },
             };
 
@@ -156,16 +161,15 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
             if second.len() < needed_len {
                 ret_err!("got a chunk smaller than the {} byte(s) needed to finish \
-                                      decoding this UTF-8 sequence: {:?}",
-                                     needed_len, first.as_slice());
+                          decoding this UTF-8 sequence: {:?}",
+                         needed_len, first.as_slice());
             }
 
             if self.accum.len().saturating_add(first.len()).saturating_add(second.len()) > self.limit {
                 // push chunks in reverse order
                 stream.push_chunk(second);
                 stream.push_chunk(first);
-                return ret_err!("Text field {:?} exceeded limit of {} bytes",
-                                self.headers, self.limit);
+                ret_err!("Text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
             }
 
             let mut buf = [0u8; 4];
@@ -176,9 +180,10 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
             let split_idx = match str::from_utf8(&buf) {
                 Ok(s) => { self.accum.push_str(s); needed_len },
-                Err(e) => match e.error_len() {
-                    Some(_) => return utf8_err(e),
-                    None => e.valid_up_to(),
+                Err(e) => if should_continue(&e, &buf) {
+                    e.valid_up_to();
+                } else {
+                    return utf8_err(e);
                 }
             };
 
@@ -231,6 +236,21 @@ static UTF8_CHAR_WIDTH: [u8; 256] = [
     4,4,4,4,4,0,0,0,0,0,0,0,0,0,0,0, // 0xFF
 ];
 
+#[inline]
 fn utf8_char_width(b: u8) -> usize {
     return UTF8_CHAR_WIDTH[b as usize] as usize;
+}
+
+/// Replacement for the reasoning using `Utf8Error::error_len()` which was stabilized in 1.20.
+fn should_continue(err: &Utf8Error, buf: &[u8]) -> bool {
+    let valid_len = err.valid_up_to();
+
+    // If the first byte of the sequence is a valid first byte
+    utf8_char_width(buf[valid_len]) > 1 && // AND
+        (
+            // If the first byte of the sequence is the only invalid byte
+            valid_len + 1 == buf.len() || // OR
+            // If all the subsequent bytes are valid continuation bytes
+            buf[valid_len + 1 ..].iter().all(|&b| b >= 0x80 && b <= 0xBF)
+        )
 }
