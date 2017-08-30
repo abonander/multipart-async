@@ -13,6 +13,59 @@ use super::{FieldHeaders, FieldData};
 
 use helpers::*;
 
+enum ChunkStack<C> {
+    Empty,
+    One(C),
+    Two(C, C),
+}
+
+impl<C> Default for ChunkStack<C> {
+    fn default() -> Self {
+        ChunkStack::Empty
+    }
+}
+
+impl<C: BodyChunk> ChunkStack<C> {
+    /// Push a chunk onto the stack
+    fn push(&mut self, chunk: C) {
+        use self::ChunkStack::*;
+
+        *self = match replace_default(self) {
+            Empty => One(chunk),
+            // This way pushes and pops only have to move one value
+            One(one) => Two(one, chunk),
+            // print in stream order
+            Two(one, two) => panic!("Chunk buffer full: [{}], [{}], [{}]",
+                                    show_bytes(chunk.as_slice()), show_bytes(two.as_slice()),
+                                    show_bytes(one.as_slice())),
+        };
+    }
+
+    /// Pop a chunk from the stack
+    fn pop(&mut self) -> Option<C> {
+        use self::ChunkStack::*;
+
+        match replace_default(self) {
+            Empty => None,
+            One(one) => { Some(one) },
+            Two(one, two) => { *self = One(one); Some(two) }
+        }
+    }
+}
+
+impl<C: BodyChunk> fmt::Debug for ChunkStack<C> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::ChunkStack::*;
+
+        match *self {
+            Empty => write!(f, "<empty>"),
+            One(ref one) => write!(f, "[{}]", show_bytes(one.as_slice())),
+            Two(ref one, ref two) => write!(f, "[{}] + [{}]", show_bytes(one.as_slice()),
+                                            show_bytes(two.as_slice())),
+        }
+    }
+}
+
 /// The result of reading a `Field` to text.
 #[derive(Clone, Debug)]
 pub struct TextField {
@@ -42,11 +95,12 @@ pub struct TextField {
 /// event loop/reactor/executor implementation, may cause a deadlock.
 #[derive(Default)]
 pub struct ReadTextField<S: Stream> {
-    data: Option<FieldData<S>>,
+    stream: Option<S>,
     accum: String,
+    chunks: ChunkStack<S::Item>,
     /// The headers for the original field, provided as a convenience.
     pub headers: Rc<FieldHeaders>,
-    /// The limit for the string, in bytes, to avoid potential DoS attacks from
+    /// The length limit for the string, in bytes, to avoid potential DoS attacks from
     /// attackers running the server out of memory. If an incoming chunk is expected to push the
     /// string over this limit, an error is returned and the offending chunk is pushed back
     /// to the head of the stream.
@@ -57,9 +111,10 @@ pub struct ReadTextField<S: Stream> {
 const DEFAULT_LIMIT: usize = 65536; // 65KiB--reasonable enough for one field, right?
 const MAX_LIMIT: usize = 16_777_216; // 16MiB--highest sane value for one field, IMO
 
-pub fn read_text<S: Stream>(data: FieldData<S>) -> ReadTextField<S> {
+pub fn read_text<S: Stream>(headers: Rc<FieldHeaders>, data: S) -> ReadTextField<S> {
     ReadTextField {
-        headers: data.headers.clone(), data: Some(data), limit: DEFAULT_LIMIT, accum: String::new()
+        headers, stream: Some(data), limit: DEFAULT_LIMIT, accum: String::new(),
+        chunks: Default::default()
     }
 }
 
@@ -103,8 +158,33 @@ impl<S: Stream> ReadTextField<S> {
     /// Will be `None` if the field was read to completion, because the internal `FieldData`
     /// instance is dropped afterwards to allow the parent `Multipart` to immediately start
     /// working on the next field.
-    pub fn into_data(self) -> Option<FieldData<S>> {
-        self.data
+    pub fn into_data(self) -> Option<S> {
+        self.stream
+    }
+}
+
+impl<S: Stream> ReadTextField<S> where S::Item: BodyChunk {
+    fn next_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
+        if let Some(chunk) = self.chunks.pop() {
+            return ready(Some(chunk));
+        }
+
+        if let Some(ref mut stream) = self.stream {
+            stream.poll()
+        } else {
+            ready(None)
+        }
+    }
+
+    /// Try to poll for another chunk; if successful, return both of them, otherwise push the first
+    /// chunk back.
+    fn another_chunk(&mut self, first: S::Item) -> PollOpt<(S::Item, S::Item), S::Error> {
+        match self.next_chunk() {
+            Ok(Ready(Some(second))) => ready(Some((first, second))),
+            Ok(Ready(None)) => ready(None),
+            Ok(NotReady) => { self.chunks.push(first); not_ready() }
+            Err(e) => { self.chunks.push(first); Err(e) },
+        }
     }
 }
 
@@ -114,33 +194,25 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
     fn poll(&mut self) -> Poll<Self::Item, S::Error> {
         loop {
-            let data = match self.data {
-                Some(ref mut data) => data,
-                None => return not_ready(),
-            };
-
-            let mut stream = data.stream_mut();
-
-            let chunk = match try_ready!(stream.body_chunk()) {
+            let chunk = match try_ready!(self.next_chunk()) {
                 Some(val) => val,
                 _ => break,
             };
 
             // This also catches capacity overflows
             if self.accum.len().saturating_add(chunk.len()) > self.limit {
-                stream.push_chunk(chunk);
-                ret_err!("Text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
+                self.chunks.push(chunk);
+                ret_err!("text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
             }
 
             // Try to convert the chunk to UTF-8 and append it to the accumulator
             let split_idx = match str::from_utf8(chunk.as_slice()) {
                 Ok(s) => { self.accum.push_str(s); continue },
-                Err(e) => if should_continue(&e, chunk.as_slice()) {
-                    // this error just means that there was a byte sequence cut off by a
-                    // chunk boundary
+                Err(e) => if e.valid_up_to() > chunk.len() - 4 {
+                    // this may just be a valid sequence split across two chunks
                     e.valid_up_to()
                 } else {
-                    // otherwise, there was an invalid byte sequence
+                    // definitely was an invalid byte sequence
                     return utf8_err(e);
                 },
             };
@@ -151,11 +223,14 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
                 .expect("a `StreamChunk` was UTF-8 before, now it's not"));
 
             // Recombine the cutoff UTF-8 sequence
-            let needed_len = utf8_char_width(invalid.as_slice()[0]) - invalid.len();
+            let char_width = utf8_char_width(invalid.as_slice()[0]);
+            let needed_len =  char_width - invalid.len();
 
             // Get a second chunk or push the first chunk back
-            let (first, second) = match try_ready!(stream.another_chunk(invalid)) {
+            let (first, second) = match try_ready!(self.another_chunk(invalid)) {
                 Some(pair) => pair,
+                // this also happens if we have some invalid bytes right at the end of the string
+                // should be rare and the end result is the same
                 None => ret_err!("unexpected end of stream while decoding a UTF-8 sequence"),
             };
 
@@ -167,36 +242,31 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
 
             if self.accum.len().saturating_add(first.len()).saturating_add(second.len()) > self.limit {
                 // push chunks in reverse order
-                stream.push_chunk(second);
-                stream.push_chunk(first);
-                ret_err!("Text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
+                self.chunks.push(second);
+                self.chunks.push(first);
+                ret_err!("text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
             }
 
             let mut buf = [0u8; 4];
 
-            // first.len() will be between 1 and 4 as guaranteed by `FromUtf8Error::valid_up_to()`
+            // first.len() will be between 1 and 4 as guaranteed by `Utf8Error::valid_up_to()`
             buf[..first.len()].copy_from_slice(first.as_slice());
-            buf[first.len()..].copy_from_slice(&second.as_slice()[.. needed_len]);
+            buf[first.len()..].copy_from_slice(&second.as_slice()[..needed_len]);
 
-            let split_idx = match str::from_utf8(&buf) {
-                Ok(s) => { self.accum.push_str(s); needed_len },
-                Err(e) => if should_continue(&e, &buf) {
-                    e.valid_up_to()
-                } else {
-                    return utf8_err(e);
-                }
-            };
+            // if this fails we definitely got an invalid byte sequence
+            str::from_utf8(&buf[..char_width]).map(|s| self.accum.push_str(s))
+                .or_else(utf8_err)?;
 
-            let (_, rem) = second.split_at(split_idx);
+            let (_, rem) = second.split_at(needed_len);
 
             if !rem.is_empty() {
-                stream.push_chunk(rem);
+                self.chunks.push(rem);
             }
         }
 
         // Optimization: free the `FieldData` so the parent `Multipart` can yield
         // the next field.
-        self.data = None;
+        self.stream = None;
 
         ready(TextField {
             headers: self.headers.clone(),
@@ -239,18 +309,4 @@ static UTF8_CHAR_WIDTH: [u8; 256] = [
 #[inline]
 fn utf8_char_width(b: u8) -> usize {
     return UTF8_CHAR_WIDTH[b as usize] as usize;
-}
-
-/// Replacement for the reasoning using `Utf8Error::error_len()` which was stabilized in 1.20.
-fn should_continue(err: &Utf8Error, buf: &[u8]) -> bool {
-    let valid_len = err.valid_up_to();
-
-    // If the first byte of the sequence is a valid first byte
-    utf8_char_width(buf[valid_len]) > 1 && // AND
-        (
-            // If the first byte of the sequence is the only invalid byte
-            valid_len + 1 == buf.len() || // OR
-            // If all the subsequent bytes are valid continuation bytes
-            buf[valid_len + 1 ..].iter().all(|&b| b >= 0x80 && b <= 0xBF)
-        )
 }

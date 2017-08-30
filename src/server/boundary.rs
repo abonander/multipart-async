@@ -23,65 +23,12 @@ use helpers::*;
 
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
-enum ChunkStack<C> {
-    Empty,
-    One(C),
-    Two(C, C),
-}
-
-impl<C> Default for ChunkStack<C> {
-    fn default() -> Self {
-        ChunkStack::Empty
-    }
-}
-
-impl<C: BodyChunk> ChunkStack<C> {
-    /// Push a chunk onto the stack
-    fn push(&mut self, chunk: C) {
-        use self::ChunkStack::*;
-
-        *self = match replace_default(self) {
-            Empty => One(chunk),
-            // This way pushes and pops only have to move one value
-            One(one) => Two(one, chunk),
-            // print in stream order
-            Two(one, two) => panic!("Chunk buffer full: [{}], [{}], [{}]",
-                                    show_bytes(chunk.as_slice()), show_bytes(two.as_slice()),
-                                    show_bytes(one.as_slice())),
-        };
-    }
-
-    /// Pop a chunk from the stack
-    fn pop(&mut self) -> Option<C> {
-        use self::ChunkStack::*;
-
-        match replace_default(self) {
-            Empty => None,
-            One(one) => { Some(one) },
-            Two(one, two) => { *self = One(one); Some(two) }
-        }
-    }
-}
-
-impl<C: BodyChunk> fmt::Debug for ChunkStack<C> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::ChunkStack::*;
-
-        match *self {
-            Empty => write!(f, "<empty>"),
-            One(ref one) => write!(f, "[{}]", show_bytes(one.as_slice())),
-            Two(ref one, ref two) => write!(f, "[{}] + [{}]", show_bytes(one.as_slice()),
-                                            show_bytes(two.as_slice())),
-        }
-    }
-}
-
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
 pub struct BoundaryFinder<S: Stream> {
     stream: S,
     state: State<S::Item>,
     boundary: Box<[u8]>,
-    chunks: ChunkStack<S::Item>,
+    chunk: Option<S::Item>,
 }
 
 impl<S: Stream> BoundaryFinder<S> {
@@ -90,7 +37,7 @@ impl<S: Stream> BoundaryFinder<S> {
             stream: stream,
             state: State::Watching,
             boundary: boundary.into().into_boxed_slice(),
-            chunks: Default::default(),
+            chunk: Default::default(),
         }
     }
 }
@@ -106,18 +53,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
             return;
         }
 
-        self.chunks.push(chunk);
-    }
-
-    /// Try to poll for another chunk; if successful, return both of them, otherwise push the first
-    /// chunk back.
-    pub fn another_chunk(&mut self, first: S::Item) -> PollOpt<(S::Item, S::Item), S::Error> {
-        match self.body_chunk() {
-            Ok(Async::Ready(Some(second))) => ready(Some((first, second))),
-            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
-            Ok(Async::NotReady) => { self.push_chunk(first); Ok(Async::NotReady) }
-            Err(e) => { self.push_chunk(first); Err(e) },
-        }
+        self.chunk = Some(chunk);
     }
 
     pub fn body_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
@@ -140,10 +76,10 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
         );
 
         loop {
-            trace!("body_chunk() loop state: {:?} chunk_buf: {:?}", self.state,
-                   self.chunks);
+            trace!("body_chunk() loop state: {:?} pushed_chunk: {:?}", self.state,
+                   self.chunk.as_ref().map(BodyChunk::as_slice));
 
-            if let Some(pushed) = self.chunks.pop() {
+            if let Some(pushed) = self.chunk.take() {
                 return ready(pushed);
             }
 
@@ -373,7 +309,7 @@ impl<S: Stream + fmt::Debug> fmt::Debug for BoundaryFinder<S> where S::Item: Bod
             .field("stream", &self.stream)
             .field("state", &self.state)
             .field("boundary", &self.boundary)
-            .field("pushed", &self.chunks)
+            .field("pushed", &self.chunk)
             .finish()
     }
 }

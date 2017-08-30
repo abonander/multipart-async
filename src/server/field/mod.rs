@@ -103,12 +103,12 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
     /// convention, web browsers will send `multipart/form-data` requests in the same
     /// charset as that of the document (page or frame) containing the form, so if you only serve
     /// ASCII/UTF-8 pages then you won't have to worry too much about decoding strange charsets.
-    pub fn read_text(self) -> ReadTextField<S> {
+    pub fn read_text(self) -> ReadTextField<Self> {
         if !self.headers.is_text() {
             debug!("attempting to read a non-text field as text: {:?}", self.headers);
         }
 
-        collect::read_text(self)
+        collect::read_text(self.headers.clone(), self)
     }
 
     fn stream_mut(&mut self) -> &mut BoundaryFinder<S> {
