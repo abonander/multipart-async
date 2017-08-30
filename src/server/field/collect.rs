@@ -181,7 +181,7 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             let split_idx = match str::from_utf8(&buf) {
                 Ok(s) => { self.accum.push_str(s); needed_len },
                 Err(e) => if should_continue(&e, &buf) {
-                    e.valid_up_to();
+                    e.valid_up_to()
                 } else {
                     return utf8_err(e);
                 }
