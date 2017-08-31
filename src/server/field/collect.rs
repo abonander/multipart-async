@@ -108,8 +108,8 @@ pub struct ReadTextField<S: Stream> {
 }
 
 // RFC on these numbers, they're pretty much arbitrary
-const DEFAULT_LIMIT: usize = 65536; // 65KiB--reasonable enough for one field, right?
-const MAX_LIMIT: usize = 16_777_216; // 16MiB--highest sane value for one field, IMO
+const DEFAULT_LIMIT: usize = 65536; // 65KiB--reasonable enough for one text field, right?
+const MAX_LIMIT: usize = 16_777_216; // 16MiB--highest sane value for one text field, IMO
 
 pub fn read_text<S: Stream>(headers: Rc<FieldHeaders>, data: S) -> ReadTextField<S> {
     ReadTextField {
@@ -200,7 +200,7 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             };
 
             // This also catches capacity overflows
-            if self.accum.len().saturating_add(chunk.len()) > self.limit {
+            if self.accum.len().checked_add(chunk.len()).map_or(true, |len| len > self.limit) {
                 self.chunks.push(chunk);
                 ret_err!("text field {:?} exceeded limit of {} bytes", self.headers, self.limit);
             }
@@ -240,7 +240,11 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
                          needed_len, first.as_slice());
             }
 
-            if self.accum.len().saturating_add(first.len()).saturating_add(second.len()) > self.limit {
+            let over_limit = self.accum.len().checked_add(first.len())
+                .and_then(|len| len.checked_add(second.len()))
+                .map_or(true, |len| len > self.limit);
+
+            if over_limit {
                 // push chunks in reverse order
                 self.chunks.push(second);
                 self.chunks.push(first);
