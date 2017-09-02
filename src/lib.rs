@@ -21,6 +21,7 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
 
+extern crate bytes;
 extern crate display_bytes;
 
 #[macro_use]
@@ -32,7 +33,7 @@ extern crate rand;
 extern crate tempdir;
 
 #[cfg(feature = "hyper")]
-extern crate hyper;
+pub extern crate hyper;
 
 pub extern crate mime;
 

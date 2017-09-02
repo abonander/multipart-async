@@ -60,9 +60,11 @@ use self::field::ReadHeaders;
 
 pub use self::field::{Field, FieldHeaders, FieldData, ReadTextField, TextField};
 
-// FIXME: hyper integration once API is in place
-// #[cfg(feature = "hyper")]
-// mod hyper;
+#[cfg(feature = "hyper")]
+mod hyper;
+
+#[cfg(feature = "hyper")]
+pub use self::hyper::{HyperReqExt, MinusBody};
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
@@ -225,8 +227,16 @@ pub trait StreamError: From<io::Error> {
     }
 }
 
-impl<E> StreamError for E where E: From<io::Error> {}
+impl StreamError for io::Error {}
 
-//impl StreamError for String {
-//    fn from_string(string: String) -> Self { string }
-//}
+impl BodyChunk for ::bytes::Bytes {
+    #[inline]
+    fn split_at(mut self, idx: usize) -> (Self, Self) {
+        (self.split_to(idx), self)
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[u8] {
+        self
+    }
+}

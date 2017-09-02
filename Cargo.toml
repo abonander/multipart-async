@@ -14,6 +14,7 @@ repository = "http://github.com/abonander/multipart-async"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+bytes = "0.4.4"
 display_bytes = "0.1"
 env_logger = "0.3"
 futures = "0.1"
