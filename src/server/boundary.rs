@@ -527,7 +527,8 @@ mod test {
         loop {
             match finder.consume_boundary().expect("Error from BoundaryFinder") {
                 Ready(val) => {
-                    assert_eq!(val, is_end, "Found wrong kind of boundary");
+                    // consume_boundary() returns false when the end boundary is found
+                    assert_eq!(val, !is_end, "Found wrong kind of boundary");
                     break;
                 },
                 _ => (),
