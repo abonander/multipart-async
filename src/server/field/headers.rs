@@ -4,7 +4,7 @@ use mime::{self, Mime, Name};
 
 use std::{io, str};
 
-use server::{Multipart, BodyChunk, StreamError, httparse, twoway};
+use server::{Multipart, BodyChunk, StreamError, StringError, httparse, twoway};
 use server::boundary::BoundaryFinder;
 
 use self::httparse::{EMPTY_HEADER, Status};
@@ -23,6 +23,7 @@ const MAX_HEADERS: usize = 4;
 /// certain file type. Sanitizing/verifying these values is (currently) beyond the scope of this
 /// crate.
 #[derive(Clone, Default, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct FieldHeaders {
     /// The name of the field as provided by the client.
     ///
@@ -240,4 +241,50 @@ fn test_header_end_split() {
     assert_eq!(header_end_split(b"\r", b"\n\r\n"), Some(3));
     assert_eq!(header_end_split(b"\r\n\r\n", b"FOOBAR"), None);
     assert_eq!(header_end_split(b"FOOBAR", b"\r\n\r\n"), None);
+}
+
+#[test]
+fn test_parse_headers() {
+    let parse_headers = parse_headers::<StringError>;
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = \"field\"\r\n\r\n"),
+        Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
+    );
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field\r\n\r\n"),
+        Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
+    );
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field\r\n\
+                        Content-Type: application/octet-stream\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
+        })
+    );
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field; filename = file.bin\r\n\
+                        Content-Type: application/octet-stream\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            filename: Some("file.bin".into()),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+        })
+    );
+
+    // reversed headers (can happen)
+    assert_eq!(
+        parse_headers(b"Content-Type: application/octet-stream\r\n\
+                        Content-Disposition: form-data; name = field; filename = file.bin\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            filename: Some("file.bin".into()),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+        })
+    );
 }

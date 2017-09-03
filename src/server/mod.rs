@@ -254,6 +254,31 @@ pub trait StreamError: From<io::Error> {
 
 impl StreamError for io::Error {}
 
+#[derive(Debug, Eq, PartialEq)]
+struct StringError(String);
+
+impl StreamError for StringError {
+    fn from_str(str: &'static str) -> Self {
+        StringError(str.into())
+    }
+
+    fn from_string(string: String) -> Self {
+        StringError(string)
+    }
+}
+
+impl Into<String> for StringError {
+    fn into(self) -> String {
+        self.0
+    }
+}
+
+impl From<io::Error> for StringError {
+    fn from(err: io::Error) -> Self {
+        StringError(err.to_string())
+    }
+}
+
 impl BodyChunk for ::bytes::Bytes {
     #[inline]
     fn split_at(mut self, idx: usize) -> (Self, Self) {
