@@ -61,12 +61,20 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
             ($try:expr) => (
                 match $try {
                     Ok(Async::Ready(Some(val))) => val,
+                    Ok(Async::Ready(None)) => {
+                        self.state = End;
+                        return ready(None);
+                    }
                     other => return other.into(),
                 }
             );
             ($try:expr; $restore:expr) => (
                 match $try {
                     Ok(Async::Ready(Some(val))) => val,
+                    Ok(Async::Ready(None)) => {
+                        self.state = End;
+                        return ready(None);
+                    },
                     other => {
                         self.state = $restore;
                         return other.into();
@@ -137,7 +145,8 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
 
             if chunk.len() < res.idx + len {
                 // Either partial boundary, or boundary but not the two bytes after it
-                self.state = Partial(chunk, res)
+                self.state = Partial(chunk, res);
+                trace!("partial boundary: {:?}", self.state);
             } else {
                 let (ret, bnd) = chunk.split_at(res.idx);
 
@@ -149,6 +158,8 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
                 };
 
                 self.state = Boundary(bnd);
+
+                trace!("boundary located: {:?} returning chunk: {}", self.state, show_bytes(ret.as_slice()));
 
                 if !ret.is_empty() {
                     return ready(ret);
@@ -211,6 +222,8 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
             .eq(self.boundary.iter())
     }
 
+    /// Returns `true` if another field should follow this boundary, `false` if the stream
+    /// is at a logical end
     pub fn consume_boundary(&mut self) -> Poll<bool, S::Error> {
         debug!("consuming boundary");
 
@@ -219,6 +232,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
         match mem::replace(&mut self.state, Watching) {
             Boundary(bnd) => self.confirm_boundary(bnd),
             BoundarySplit(first, second) => self.confirm_boundary_split(first, second),
+            End => ready(false),
             state => unreachable!("invalid state: {:?}", state),
         }
     }
@@ -254,7 +268,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
 
         if is_end { self.state = End; }
 
-        ready(is_end)
+        ready(!is_end)
     }
 
     fn confirm_boundary_split(&mut self, first: S::Item, second: S::Item) -> Poll<bool, S::Error> {
@@ -284,7 +298,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
 
         if is_end { self.state = End; }
 
-        ready(is_end)
+        ready(!is_end)
     }
 
     /// The necessary size to verify a boundary, including the potential CRLF before, and the

@@ -67,14 +67,19 @@ impl ReadHeaders {
     pub fn read_headers<S: Stream>(&mut self, stream: &mut BoundaryFinder<S>) -> PollOpt<FieldHeaders, S::Error>
     where S::Item: BodyChunk, S::Error: StreamError {
         loop {
+            trace!("read_headers state: accumulator: {}", show_bytes(&self.accumulator));
+
             let chunk = match try_ready!(stream.poll()) {
                 Some(chunk) => chunk,
                 None => return if !self.accumulator.is_empty() {
                     error("unexpected end of stream")
                 } else {
+                    trace!("end of request reached");
                     ready(None)
                 },
             };
+
+            trace!("got chunk for headers: {}", show_bytes(chunk.as_slice()));
 
             // End of the headers section is signalled by a double-CRLF
             if let Some(header_end) = twoway::find_bytes(chunk.as_slice(), b"\r\n\r\n") {
@@ -140,6 +145,8 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
         Err(e) => ret_err!("error parsing headers: {}; from buffer: {}", e, show_bytes(bytes)),
     };
 
+    trace!("parsed headers: {:?}", headers);
+
     let mut out_headers = FieldHeaders::default();
 
     for header in headers {
@@ -159,8 +166,10 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
 }
 
 fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Result<(), E> {
+    debug!("parse_cont_disp_val({:?})", val);
+
     // Only take the first section, the rest can be in quoted strings that we want to handle
-    let mut sections = val.splitn(1, ';').map(str::trim);
+    let mut sections = val.splitn(2, ';').map(str::trim);
 
     match sections.next() {
         Some("form-data") => (),
@@ -195,7 +204,7 @@ fn parse_keyval(input: &str) -> Option<(&str, &str, &str)> {
 }
 
 fn param_name(input: &str) -> Option<(&str, &str)> {
-    let mut splits = input.trim_left_matches(&[' ', ';'][..]).splitn(1, '=');
+    let mut splits = input.trim_left_matches(&[' ', ';'][..]).splitn(2, '=');
 
     let name = try_opt!(splits.next()).trim();
     let rem = splits.next().unwrap_or("");
@@ -205,13 +214,13 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
 
 fn param_val(input: &str) -> Option<(&str, &str)> {
     let pat: &[char] = &['"'];
-    let mut splits = input.splitn(2, pat);
+    let mut splits = input.splitn(3, pat);
 
     let token = try_opt!(splits.next()).trim();
 
     // the value doesn't have to be in quotes if it doesn't contain forbidden chars like `;`
     if !token.is_empty() {
-        let mut splits = token.splitn(1, ';');
+        let mut splits = token.splitn(2, ';');
         let token = try_opt!(splits.next()).trim();
         let rem = splits.next().unwrap_or("");
 

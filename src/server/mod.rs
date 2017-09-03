@@ -64,7 +64,7 @@ pub use self::field::{Field, FieldHeaders, FieldData, ReadTextField, TextField};
 mod hyper;
 
 #[cfg(feature = "hyper")]
-pub use self::hyper::{HyperReqExt, MinusBody};
+pub use self::hyper::{MinusBody, MultipartService};
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
@@ -77,7 +77,8 @@ pub use self::hyper::{HyperReqExt, MinusBody};
 /// (`Field`, `ReadTextField`, or any stream combinators).
 pub struct Multipart<S: Stream> {
     internal: Rc<Internal<S>>,
-    read_hdr: ReadHeaders
+    read_hdr: ReadHeaders,
+    consumed: bool,
 }
 
 // Q: why can't we just wrap up these bounds into a trait?
@@ -97,6 +98,7 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
         Multipart { 
             internal: Rc::new(Internal::new(stream, boundary)),
             read_hdr: ReadHeaders::default(),
+            consumed: false,
         }
     }
 }
@@ -109,6 +111,7 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
         // FIXME: combine this with the next statement when non-lexical lifetimes are added
         // shouldn't be an issue anyway because the optimizer can fold these checks together
         if Rc::get_mut(&mut self.internal).is_none() {
+            debug!("returning NotReady, field was in flight");
             self.internal.park_curr_task();
             return not_ready();
         }
@@ -117,11 +120,23 @@ impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: Stre
         let headers = {
             let stream = Rc::get_mut(&mut self.internal).unwrap().stream.get_mut();
 
+            // only attempt to consume the boundary if it hasn't been done yet
+            self.consumed = self.consumed || try_ready!(stream.consume_boundary());
+
+            if !self.consumed {
+                return ready(None);
+            }
+
             match try_ready!(self.read_hdr.read_headers(stream)) {
                 Some(headers) => headers,
                 None => return ready(None),
             }
         };
+
+        // the boundary should be consumed the next time poll() is ready to move forward
+        self.consumed = false;
+
+        info!("read field: {:?}", headers);
 
         ready(field::new_field(headers, self.internal.clone()))
     }
@@ -150,6 +165,16 @@ impl<S: Stream> Internal<S> {
         self.waiting_task.take().map(|t| t.notify());
     }
 }
+
+/// An extension trait for requests which may be multipart.
+pub trait RequestExt: Sized {
+    /// The success type, may contain `Multipart` or something else.
+    type Multipart;
+
+    /// Convert `Self` into `Self::Multipart` if applicable.
+    fn into_multipart(self) -> Result<Self::Multipart, Self>;
+}
+
 
 /// The operations required from a body stream's `Item` type.
 pub trait BodyChunk: Sized {

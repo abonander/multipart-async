@@ -35,3 +35,8 @@ server = ["twoway", "httparse"]
 sse4 = ["twoway/pcmp"]
 # Use `Arc` instead of `Rc` where needed
 use_arc = []
+
+[[bin]]
+name = "form_test"
+path = "bin/form_test.rs"
+required-features = ["hyper", "server"]
