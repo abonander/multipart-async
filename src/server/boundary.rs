@@ -417,6 +417,7 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
+/* FIXME: when `mock_stream!()` is fully implemented
 #[cfg(test)]
 mod test {
     use super::{BoundaryFinder, ready, not_ready, show_bytes};
@@ -433,42 +434,6 @@ mod test {
     const BOUNDARY: &'static str = "--boundary";
 
     type TestingFinder = BoundaryFinder<MockStream>;
-
-    struct MockStream {
-        stream: Vec<(&'static [u8], usize)>,
-        curr: usize,
-    }
-
-    impl MockStream {
-        fn new(stream: Vec<(&'static [u8], usize)>) -> Self {
-            MockStream {
-                stream: stream,
-                curr: 0,
-            }
-        }
-    }
-
-    impl Stream for MockStream {
-        type Item = &'static [u8];
-        type Error = io::Error;
-
-        fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-            let curr = self.curr;
-
-            if curr >= self.stream.len() {
-                return ready(None);
-            }
-
-            if self.stream[curr].1 > 0 {
-                self.stream[curr].1 -= 1;
-                return not_ready();
-            }
-
-            self.curr += 1;
-
-            ready(self.stream[curr].0)
-        }
-    }
 
     macro_rules! mock_finder (
         ($($input:tt)*) => (
@@ -599,4 +564,4 @@ mod test {
         [[b"asdf1234"], [b"hjkl5678"]]
     }
 }
-
+*/
