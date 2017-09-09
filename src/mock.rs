@@ -1,8 +1,8 @@
-use futures::Async;
+use futures::{Async, Stream};
 
 #[macro_export]
 macro_rules! mock_stream {
-    ($end:pat; {$($branches:tt)*}) => ({
+    ($end:expr; {$($branches:tt)*}) => ({
         struct MockStream(u32);
 
         impl $crate::futures::Stream for MockStream {
@@ -15,22 +15,37 @@ macro_rules! mock_stream {
 
                 match state {
                     $($branches)*
-                    $end => return $crate::futures::Async::Ready(None),
+                    $end => return Ok($crate::futures::Async::Ready(None)),
                     _ => panic!("MockStream::poll() called after returning `None`"),
                 }
             }
         }
+
+        MockStream(0)
     });
     () => (
         mock_stream!(0; {})
     )
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct StringError(String);
+
+impl PartialEq<String> for StringError {
+    fn eq(&self, other: &String) -> bool {
+        *self == **other
+    }
+}
+
+impl PartialEq<str> for StringError {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
 
 #[test]
 fn test_empty_mock() {
-    assert_eq!(mock_stream!().poll(), Async::Ready(None));
+    assert_eq!(mock_stream!().poll(), Ok(Async::Ready(None)));
 }
 
 #[test]
