@@ -50,7 +50,9 @@ use std::sync::Arc;
 pub mod server;
 
 mod helpers;
-mod mock;
+
+#[doc(hidden)]
+pub mod mock;
 
 /*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;

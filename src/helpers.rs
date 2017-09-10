@@ -4,8 +4,6 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use futures::{Async, Stream};
-
 use std::borrow::Cow;
 use std::error::Error;
 use std::io;
@@ -16,7 +14,7 @@ use server::StreamError;
 
 pub use display_bytes::display_bytes as show_bytes;
 
-pub use futures::{Poll, Stream};
+pub use futures::*;
 
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
