@@ -16,7 +16,7 @@ use server::StreamError;
 
 pub use display_bytes::display_bytes as show_bytes;
 
-pub use futures::Poll;
+pub use futures::{Poll, Stream};
 
 pub type PollOpt<T, E> = Poll<Option<T>, E>;
 
