@@ -28,6 +28,7 @@ macro_rules! mock_stream {
     });
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! stream_items (
     (@($state:ident, $val:expr) $ex:expr) => (
@@ -104,7 +105,6 @@ pub fn into_poll<T: IntoPoll>(from: T) -> Poll<Option<Cow<'static, [u8]>>, Strin
     from.into_poll()
 }
 
-
 #[cfg(test)]
 mod test {
     use std::borrow::Cow;
@@ -146,6 +146,23 @@ mod test {
         let mut stream = mock_stream!("Hello, world!", 1);
         assert_eq!(stream.poll(), into_poll("Hello, world!"));
         assert_eq!(stream.poll(), ready(Some(b"Hello, world!".as_ref().into())));
+        assert_eq!(stream.poll(), ready(None));
+    }
+
+    #[test]
+    fn test_two_items() {
+        let mut stream = mock_stream!("Hello, world!"; "Hello, also!");
+        assert_eq!(stream.poll(), into_poll("Hello, world!"));
+        assert_eq!(stream.poll(), into_poll("Hello, also!"));
+        assert_eq!(stream.poll(), ready(None));
+    }
+
+    #[test]
+    fn test_two_items_one_repeat() {
+        let mut stream = mock_stream!("Hello, world!", 1; "Hello, also!");
+        assert_eq!(stream.poll(), into_poll("Hello, world!"));
+        assert_eq!(stream.poll(), into_poll("Hello, world!"));
+        assert_eq!(stream.poll(), into_poll("Hello, also!"));
         assert_eq!(stream.poll(), ready(None));
     }
 }

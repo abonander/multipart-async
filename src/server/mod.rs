@@ -21,7 +21,7 @@ use mime::Mime;
 
 use tempdir::TempDir;
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::fs::{self, File};
@@ -173,120 +173,4 @@ pub trait RequestExt: Sized {
 
     /// Convert `Self` into `Self::Multipart` if applicable.
     fn into_multipart(self) -> Result<Self::Multipart, Self>;
-}
-
-
-/// The operations required from a body stream's `Item` type.
-pub trait BodyChunk: Sized {
-    /// Split the chunk at `idx`, returning `(self[..idx], self[idx..])`.
-    fn split_at(self, idx: usize) -> (Self, Self);
-
-    /// Get the slice representing the data of this chunk.
-    fn as_slice(&self) -> &[u8];
-
-    /// Equivalent to `self.as_slice().len()`
-    #[inline(always)]
-    fn len(&self) -> usize {
-        self.as_slice().len()
-    }
-
-    /// Equivalent to `self.as_slice().is_empty()`
-    #[inline(always)]
-    fn is_empty(&self) -> bool {
-        self.as_slice().is_empty()
-    }
-
-    /// Equivalent to `self.as_slice().to_owned()`
-    ///
-    /// Implementors are welcome to override this if they can provide a cheaper conversion.
-    #[inline(always)]
-    fn into_vec(self) -> Vec<u8> {
-        self.as_slice().to_owned()
-    }
-}
-
-impl BodyChunk for Vec<u8> {
-    fn split_at(mut self, idx: usize) -> (Self, Self) {
-        let other = self.split_off(idx);
-        (self, other)
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        self
-    }
-
-    fn into_vec(self) -> Vec<u8> { self }
-}
-
-impl<'a> BodyChunk for &'a [u8] {
-    fn split_at(self, idx: usize) -> (Self, Self) {
-        self.split_at(idx)
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        self
-    }
-}
-
-/// The operations required from a body stream's `Error` type.
-pub trait StreamError: From<io::Error> {
-    /// Wrap a static string into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_str(str: &'static str) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, str).into()
-    }
-
-    /// Wrap a dynamic string into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_string(string: String) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, string).into()
-    }
-
-    /// Wrap a `std::str::Utf8Error` into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_utf8(err: Utf8Error) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, err).into()
-    }
-}
-
-impl StreamError for io::Error {}
-
-#[derive(Debug, Eq, PartialEq)]
-struct StringError(String);
-
-impl StreamError for StringError {
-    fn from_str(str: &'static str) -> Self {
-        StringError(str.into())
-    }
-
-    fn from_string(string: String) -> Self {
-        StringError(string)
-    }
-}
-
-impl Into<String> for StringError {
-    fn into(self) -> String {
-        self.0
-    }
-}
-
-impl From<io::Error> for StringError {
-    fn from(err: io::Error) -> Self {
-        StringError(err.to_string())
-    }
-}
-
-impl BodyChunk for ::bytes::Bytes {
-    #[inline]
-    fn split_at(mut self, idx: usize) -> (Self, Self) {
-        (self.split_to(idx), self)
-    }
-
-    #[inline]
-    fn as_slice(&self) -> &[u8] {
-        self
-    }
 }
