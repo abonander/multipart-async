@@ -10,7 +10,7 @@ use std::io;
 use std::mem;
 use std::str::Utf8Error;
 
-use server::StreamError;
+use StreamError;
 
 pub use display_bytes::display_bytes as show_bytes;
 

@@ -39,8 +39,11 @@ pub extern crate mime;
 
 use rand::Rng;
 
+use std::borrow::Cow;
 use std::rc::Rc;
+use std::str::Utf8Error;
 use std::sync::Arc;
+use std::{io};
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]

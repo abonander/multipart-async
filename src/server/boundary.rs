@@ -15,7 +15,7 @@ use std::fmt;
 use std::io;
 use std::mem;
 
-use super::{BodyChunk, StreamError};
+use {BodyChunk, StreamError};
 
 use self::State::*;
 

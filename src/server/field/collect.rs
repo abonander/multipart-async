@@ -7,7 +7,9 @@ use std::{fmt, str};
 
 
 use server::boundary::BoundaryFinder;
-use server::{Internal, BodyChunk, StreamError};
+use server::{Internal};
+
+use {BodyChunk, StreamError};
 
 use super::{FieldHeaders, FieldData};
 

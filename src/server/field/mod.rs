@@ -13,7 +13,9 @@ use std::rc::Rc;
 use std::{io, mem, str};
 
 use server::boundary::BoundaryFinder;
-use server::{Internal, BodyChunk, StreamError, httparse};
+use server::{Internal, httparse};
+
+use {BodyChunk, StreamError};
 
 use helpers::*;
 

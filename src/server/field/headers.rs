@@ -4,8 +4,10 @@ use mime::{self, Mime, Name};
 
 use std::{io, str};
 
-use server::{Multipart, BodyChunk, StreamError, StringError, httparse, twoway};
+use server::{Multipart, httparse, twoway};
 use server::boundary::BoundaryFinder;
+
+use { BodyChunk, StreamError, StringError};
 
 use self::httparse::{EMPTY_HEADER, Status};
 

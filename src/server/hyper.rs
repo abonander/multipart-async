@@ -18,7 +18,8 @@ use mime::{self, Mime, Name};
 
 use std::str::Utf8Error;
 
-use super::{Multipart, BodyChunk, RequestExt, StreamError};
+use super::{Multipart, RequestExt};
+use {BodyChunk, StreamError};
 
 impl RequestExt for Request {
     type Multipart = (Multipart<Body>, MinusBody);

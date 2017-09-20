@@ -33,6 +33,8 @@ use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryFinder;
 
+use {BodyChunk, StreamError};
+
 macro_rules! try_opt (
     ($expr:expr) => (
         match $expr {
