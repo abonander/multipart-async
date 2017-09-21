@@ -14,7 +14,7 @@ use hyper::header::ContentType;
 pub use hyper::{Body, Chunk, Error, Headers, HttpVersion, Method, Request, Response, Uri};
 pub use hyper::server::Service;
 
-use mime::{self, Mime, Name};
+use mime::{self, Mime};
 
 use std::str::Utf8Error;
 

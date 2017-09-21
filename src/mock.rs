@@ -1,5 +1,3 @@
-use futures::{Async, Stream};
-
 use std::borrow::Cow;
 
 use helpers::*;

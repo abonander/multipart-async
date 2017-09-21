@@ -19,7 +19,7 @@
 //! for client and/or server depending on which other feature flags are set.
 #![deny(missing_docs)]
 #[macro_use] extern crate log;
-extern crate env_logger;
+//extern crate env_logger;
 
 extern crate bytes;
 extern crate display_bytes;
@@ -27,10 +27,10 @@ extern crate display_bytes;
 #[macro_use]
 extern crate futures;
 
-extern crate mime_guess;
+//extern crate mime_guess;
 extern crate rand;
 
-extern crate tempdir;
+//extern crate tempdir;
 
 #[cfg(feature = "hyper")]
 pub extern crate hyper;
@@ -40,9 +40,7 @@ pub extern crate mime;
 use rand::Rng;
 
 use std::borrow::Cow;
-use std::rc::Rc;
 use std::str::Utf8Error;
-use std::sync::Arc;
 use std::{io};
 
 // FIXME: after server prototype is working

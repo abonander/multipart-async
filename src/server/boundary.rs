@@ -8,12 +8,7 @@ extern crate twoway;
 
 use futures::{Async, Poll, Stream};
 
-use std::cmp;
-use std::borrow::{Borrow, Cow};
-use std::error::Error;
-use std::fmt;
-use std::io;
-use std::mem;
+use std::{fmt, mem};
 
 use {BodyChunk, StreamError};
 
@@ -205,11 +200,6 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
             )
     }
 
-    fn maybe_boundary(&self, bytes: &[u8]) -> bool {
-        (bytes.len() >= 2 && self.boundary.starts_with(&bytes[2..]))
-            || self.boundary.starts_with(bytes)
-    }
-
     fn check_boundary(&self, bytes: &[u8]) -> bool {
         (bytes.len() >= 2 && bytes[2..].starts_with(&self.boundary))
             || bytes.starts_with(&self.boundary)
@@ -259,8 +249,6 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
         self.state = if !rem.is_empty() { Remainder(rem) } else { Watching };
 
         trace!("boundary found: {}", show_bytes(boundary));
-
-        let len = boundary.len();
 
         let is_end = check_last_two(boundary);
 
@@ -342,7 +330,6 @@ enum State<B> {
 
 impl<B: BodyChunk> fmt::Debug for State<B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use std::fmt::Write;
         use self::State::*;
 
         match *self {

@@ -17,19 +17,8 @@ extern crate twoway;
 use futures::{Poll, Stream};
 use futures::task::{self, Task};
 
-use mime::Mime;
-
-use tempdir::TempDir;
-
-use std::borrow::{Borrow, Cow};
 use std::cell::Cell;
-use std::collections::VecDeque;
-use std::fs::{self, File};
-use std::io::prelude::*;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::str::Utf8Error;
-use std::{fmt, io, mem, ptr};
 
 use self::boundary::BoundaryFinder;
 

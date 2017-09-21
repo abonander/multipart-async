@@ -9,11 +9,10 @@ use futures::Future;
 use futures::future::Either;
 use futures::Stream;
 
-use hyper::header::ContentLength;
-use hyper::server::{Http, Service};
-use hyper::{Body, Error, Request, Response};
+use hyper::server::Http;
+use hyper::{Body, Response};
 
-use multipart::server::{Field, MinusBody, Multipart, MultipartService};
+use multipart::server::{Field, Multipart, MultipartService};
 
 use std::net::SocketAddr;
 
@@ -27,7 +26,7 @@ fn main() {
     Http::new()
         .bind(&addr, ||
             Ok(MultipartService {
-                multipart: |(multi, rest): (Multipart<Body>, _)| {
+                multipart: |(multi, _rest): (Multipart<Body>, _)| {
                     let read_field = |field: Field<Body>| if field.headers.is_text() {
                         Either::A(field.data.read_text().map(|field| {
                             info!("got text field: {:?}", field);
@@ -52,6 +51,6 @@ fn response<B: Into<Body>>(b: B) -> Response {
 }
 
 
-fn eat_ok<T, E>(val: T) -> Result<(), E> {
+fn eat_ok<T, E>(_val: T) -> Result<(), E> {
     Ok(())
 }

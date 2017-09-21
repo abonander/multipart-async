@@ -5,8 +5,6 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 use std::borrow::Cow;
-use std::error::Error;
-use std::io;
 use std::mem;
 use std::str::Utf8Error;
 

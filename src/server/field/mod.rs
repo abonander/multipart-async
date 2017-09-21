@@ -4,23 +4,16 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use futures::{Future, Stream, Async, Poll};
-use futures::Async::*;
-
-use mime::{self, Mime};
+use futures::{Stream, Poll};
 
 use std::rc::Rc;
-use std::{io, mem, str};
+use std::str;
 
 use server::boundary::BoundaryFinder;
-use server::{Internal, httparse};
+use server::Internal;
 
 use {BodyChunk, StreamError};
 
-use helpers::*;
-
-
-use self::httparse::EMPTY_HEADER;
 
 mod collect;
 mod headers;

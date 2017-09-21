@@ -1,13 +1,13 @@
-use futures::{Poll, Stream};
+use futures::Stream;
 
 use mime::{self, Mime, Name};
 
-use std::{io, str};
+use std::str;
 
-use server::{Multipart, httparse, twoway};
+use server::{httparse, twoway};
 use server::boundary::BoundaryFinder;
 
-use { BodyChunk, StreamError, StringError};
+use { BodyChunk, StreamError};
 
 use self::httparse::{EMPTY_HEADER, Status};
 

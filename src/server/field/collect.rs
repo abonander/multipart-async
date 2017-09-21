@@ -2,16 +2,11 @@ use futures::{Future, Stream};
 use futures::Async::*;
 
 use std::rc::Rc;
-use std::str::Utf8Error;
 use std::{fmt, str};
-
-
-use server::boundary::BoundaryFinder;
-use server::{Internal};
 
 use {BodyChunk, StreamError};
 
-use super::{FieldHeaders, FieldData};
+use super::FieldHeaders;
 
 use helpers::*;
 
