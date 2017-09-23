@@ -2,6 +2,7 @@ use futures::Stream;
 
 use mime::{self, Mime, Name};
 
+use std::ascii::AsciiExt;
 use std::str;
 
 use server::{httparse, twoway};
@@ -157,11 +158,13 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
             .or_else(|_| error("multipart field headers must be UTF-8 encoded"))?
             .trim();
 
-        match header.name {
-            "Content-Disposition" => parse_cont_disp_val(str_val, &mut out_headers)?,
-            "Content-Type" => out_headers.content_type = Some(str_val.parse::<Mime>()
-                 .or_else(|_| ret_err!("could not parse MIME type from {:?}", str_val))?),
-            _ => (),
+        if "Content-Disposition".eq_ignore_ascii_case(header.name) {
+            parse_cont_disp_val(str_val, &mut out_headers)?;
+        } else if "Content-Type".eq_ignore_ascii_case(header.name) {
+            out_headers.content_type = Some(
+                str_val.parse::<Mime>()
+                    .or_else(|_| ret_err!("could not parse MIME type from {:?}", str_val))?
+            );
         }
     }
 
@@ -247,6 +250,8 @@ fn test_header_end_split() {
 
 #[test]
 fn test_parse_headers() {
+    use StringError;
+
     let parse_headers = parse_headers::<StringError>;
 
     assert_eq!(
@@ -254,6 +259,19 @@ fn test_parse_headers() {
         Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
     );
 
+    // lowercase
+    assert_eq!(
+        parse_headers(b"content-disposition: form-data; name = \"field\"\r\n\r\n"),
+        Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
+    );
+
+    // mixed case
+    assert_eq!(
+        parse_headers(b"cOnTent-dIsPosition: form-data; name = \"field\"\r\n\r\n"),
+        Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
+    );
+
+    // omitted quotes
     assert_eq!(
         parse_headers(b"Content-Disposition: form-data; name = field\r\n\r\n"),
         Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
@@ -269,6 +287,7 @@ fn test_parse_headers() {
         })
     );
 
+    // filename without quotes with extension
     assert_eq!(
         parse_headers(b"Content-Disposition: form-data; name = field; filename = file.bin\r\n\
                         Content-Type: application/octet-stream\r\n\r\n"),
