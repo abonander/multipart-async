@@ -259,16 +259,56 @@ fn test_parse_headers() {
         Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
     );
 
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = \"field\"\r\n\
+                        Content-Type: application/octet-stream\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
+        })
+    );
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = \"field\"\r\n\
+                        Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::TEXT_PLAIN_UTF_8),
+            .. FieldHeaders::default()
+        })
+    );
+
     // lowercase
     assert_eq!(
         parse_headers(b"content-disposition: form-data; name = \"field\"\r\n\r\n"),
         Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
     );
 
+    assert_eq!(
+        parse_headers(b"content-disposition: form-data; name = \"field\"\r\n\
+                        content-type: application/octet-stream\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
+        })
+    );
+
     // mixed case
     assert_eq!(
         parse_headers(b"cOnTent-dIsPosition: form-data; name = \"field\"\r\n\r\n"),
         Ok(FieldHeaders { name: "field".into(), .. FieldHeaders::default()})
+    );
+
+    assert_eq!(
+        parse_headers(b"contEnt-disPosition: form-data; name = \"field\"\r\n\
+                        coNtent-tyPe: application/octet-stream\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
+        })
     );
 
     // omitted quotes
@@ -283,6 +323,16 @@ fn test_parse_headers() {
         Ok(FieldHeaders {
             name: "field".into(),
             content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
+        })
+    );
+
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field\r\n\
+                        Content-Type: text/plain; charset=utf-8\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            content_type: Some(mime::TEXT_PLAIN_UTF_8),
             .. FieldHeaders::default()
         })
     );
