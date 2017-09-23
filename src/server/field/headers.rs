@@ -1,5 +1,7 @@
 use futures::Stream;
 
+use http::header::{HeaderMap, HeaderName, HeaderValue};
+
 use mime::{self, Mime, Name};
 
 use std::ascii::AsciiExt;
@@ -44,6 +46,10 @@ pub struct FieldHeaders {
     /// The `Content-Type` of this field, as provided by the client. If `None`, then the field
     /// is probably text, but this is not guaranteed.
     pub content_type: Option<Mime>,
+    /// Any additional headers, standard or otherwise, for this field as provided by the client.
+    ///
+    /// The size of this map will be limited internally.
+    pub ext: HeaderMap,
 }
 
 impl FieldHeaders {
@@ -153,19 +159,73 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
 
     let mut out_headers = FieldHeaders::default();
 
-    for header in headers {
-        let str_val = str::from_utf8(header.value)
-            .or_else(|_| error("multipart field headers must be UTF-8 encoded"))?
-            .trim();
+    let mut dupe_cont_type = false;
 
+    for header in headers {
         if "Content-Disposition".eq_ignore_ascii_case(header.name) {
+            if !out_headers.name.is_empty() {
+                ret_err!("duplicate `Content-Disposition` header on field: {}", out_headers.name);
+            }
+
+            let str_val = str::from_utf8(header.value)
+                .or_else(|_| error("multipart `Content-Disposition` header values \
+                                                     must be UTF-8 encoded"))?
+                .trim();
+
             parse_cont_disp_val(str_val, &mut out_headers)?;
         } else if "Content-Type".eq_ignore_ascii_case(header.name) {
+            if out_headers.content_type.is_some() {
+                // try to get the field name from `Content-Disposition` first
+                // if none was provided then that's the bigger issue
+                dupe_cont_type = true;
+                continue;
+            }
+
+            let str_val = str::from_utf8(header.value)
+                .or_else(|_| error("multipart `Content-Type` header values \
+                                                     must be UTF-8 encoded"))?
+                .trim();
+
             out_headers.content_type = Some(
                 str_val.parse::<Mime>()
-                    .or_else(|_| ret_err!("could not parse MIME type from {:?}", str_val))?
+                    .or_else(|_|
+                        fmt_err!("could not parse MIME type from {:?}", str_val)
+                    )?
             );
+        } else {
+            let hdr_name = HeaderName::from_bytes(header.name.as_bytes())
+                .or_else(|e|
+                    fmt_err!("error on multipart field header \"{}\": {}",
+                             header.name, e)
+                )?;
+
+            let hdr_val = HeaderValue::from_bytes(bytes)
+                .or_else(|e|
+                    fmt_err!("error on multipart field header \"{}\": {}",
+                             header.name, e)
+                )?;
+
+            out_headers.ext.append(hdr_name, hdr_val);
         }
+    }
+
+    if out_headers.name.is_empty() {
+        // missing `name` parameter in a provided `Content-Disposition` is covered separately
+        if let Some(filename) = out_headers.filename {
+            ret_err!("missing `Content-Disposition` header on a field \
+                      (filename: {}) in this multipart request", filename);
+        }
+
+        if let Some(content_type) = out_headers.content_type {
+            ret_err!("missing `Content-Disposition` header on a field \
+                      (Content-Type: {}) in this multipart request", content_type);
+        }
+
+        ret_err!("missing `Content-Disposition` header on a field in this multipart request");
+    }
+
+    if dupe_cont_type {
+        ret_err!("duplicate `Content-Type` header in field: {}", out_headers.name);
     }
 
     Ok(out_headers)
@@ -177,10 +237,10 @@ fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Res
     // Only take the first section, the rest can be in quoted strings that we want to handle
     let mut sections = val.splitn(2, ';').map(str::trim);
 
-    match sections.next() {
-        Some("form-data") => (),
-        Some(other) => ret_err!("unexpected multipart field Content-Disposition: {}", other),
-        None => return error("each multipart field requires a Content-Disposition: form-data header"),
+    if !sections.next().unwrap_or("").eq_ignore_ascii_case("form-data") {
+        ret_err!("unexpected/unsupported field header `Content-Disposition: {}` \
+                  in this multipart request; each field must have exactly one \
+                  `Content-Disposition: form-data` header with a `name` parameter", val);
     }
 
     let mut rem = sections.next().unwrap_or("");
@@ -196,13 +256,15 @@ fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Res
     }
 
     if out.name.is_empty() {
-        ret_err!("expected 'name' attribute in Content-Disposition: {}", val);
+        ret_err!("expected 'name' parameter in `Content-Disposition: {}`", val);
     }
 
     Ok(())
 }
 
 fn parse_keyval(input: &str) -> Option<(&str, &str, &str)> {
+    if input.trim().is_empty() { return None; }
+
     let (name, rest) = try_opt!(param_name(input));
     let (val, rest) = try_opt!(param_val(rest));
 
@@ -219,22 +281,23 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
 }
 
 fn param_val(input: &str) -> Option<(&str, &str)> {
-    let pat: &[char] = &['"'];
-    let mut splits = input.splitn(3, pat);
+    // continue until the opening quote or the terminating semicolon
+    let mut tk_splits = input.splitn(2, &['"', ';'][..]);
 
-    let token = try_opt!(splits.next()).trim();
+    let token = try_opt!(tk_splits.next()).trim();
+    let rem = tk_splits.next().unwrap_or("");
 
     // the value doesn't have to be in quotes if it doesn't contain forbidden chars like `;`
     if !token.is_empty() {
-        let mut splits = token.splitn(2, ';');
-        let token = try_opt!(splits.next()).trim();
-        let rem = splits.next().unwrap_or("");
-
-        return Some((token, rem));
+        return Some((token, rem.trim_matches(&[' ', ';'][..])));
     }
 
-    let qstr = try_opt!(splits.next()).trim();
-    let rem = splits.next().unwrap_or_else(|| { warn!("unterminated quote: {:?}", qstr); "" });
+    // continue until the terminating quote
+    let mut qt_splits = rem.splitn(2, '"');
+
+    let qstr = try_opt!(qt_splits.next()).trim();
+    let rem = qt_splits.next().unwrap_or_else(|| { warn!("unterminated quote: {:?}", qstr); "" })
+        .trim_matches(&[' ', ';'][..]);
 
     Some((qstr, rem))
 }
@@ -246,6 +309,26 @@ fn test_header_end_split() {
     assert_eq!(header_end_split(b"\r", b"\n\r\n"), Some(3));
     assert_eq!(header_end_split(b"\r\n\r\n", b"FOOBAR"), None);
     assert_eq!(header_end_split(b"FOOBAR", b"\r\n\r\n"), None);
+}
+
+#[test]
+fn test_parse_keyval() {
+    assert_eq!(
+        parse_keyval("name = field; x-attr = \"some;value\"; filename = file.bin"),
+        Some(("name", "field", "x-attr = \"some;value\"; filename = file.bin"))
+    );
+
+    assert_eq!(
+        parse_keyval("x-attr = \"some;value\"; filename = file.bin"),
+        Some(("x-attr", "some;value", "filename = file.bin"))
+    );
+
+    assert_eq!(
+        parse_keyval("filename = file.bin"),
+        Some(("filename", "file.bin", ""))
+    );
+
+    assert_eq!(parse_keyval(""), None);
 }
 
 #[test]
@@ -345,6 +428,7 @@ fn test_parse_headers() {
             name: "field".into(),
             filename: Some("file.bin".into()),
             content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
         })
     );
 
@@ -356,6 +440,40 @@ fn test_parse_headers() {
             name: "field".into(),
             filename: Some("file.bin".into()),
             content_type: Some(mime::APPLICATION_OCTET_STREAM),
+            .. FieldHeaders::default()
         })
+    );
+
+    // quoted parameter with semicolon (allowed by spec)
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field; x-attr = \"some;value\"; \
+                        filename = file.bin\r\n\r\n"),
+        Ok(FieldHeaders {
+            name: "field".into(),
+            filename: Some("file.bin".into()),
+            content_type: None,
+            .. FieldHeaders::default()
+        })
+    )
+}
+
+#[test]
+fn test_parse_headers_errors() {
+    use StringError;
+
+    let parse_headers = parse_headers::<StringError>;
+
+    // missing content-disposition
+    assert_eq!(
+        parse_headers(b"Content-Type: application/octet-stream\r\n\r\n").unwrap_err(),
+        "missing `Content-Disposition` header on a field \
+         (Content-Type: application/octet-stream) in this multipart request"
+    );
+
+    // duplicate content-disposition
+    assert_eq!(
+        parse_headers(b"Content-Disposition: form-data; name = field\r\n\
+                        Content-Disposition: form-data; name = field2\r\n\r\n").unwrap_err(),
+        "duplicate `Content-Disposition` header on field: field"
     );
 }

@@ -34,11 +34,17 @@ macro_rules! try_opt (
 );
 
 macro_rules! ret_err (
+    ($($args:tt)+) => (
+            return fmt_err!($($args)+);
+    )
+);
+
+macro_rules! fmt_err(
     ($string:expr) => (
-        return ::helpers::error($string);
+        ::helpers::error($string)
     );
     ($string:expr, $($args:tt)*) => (
-        return ::helpers::error(format!($string, $($args)*));
+        ::helpers::error(format!($string, $($args)*))
     );
 );
 

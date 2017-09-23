@@ -37,11 +37,13 @@ pub extern crate hyper;
 
 pub extern crate mime;
 
+pub extern crate http;
+
 use rand::Rng;
 
 use std::borrow::Cow;
 use std::str::Utf8Error;
-use std::{io};
+use std::{io, ops};
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]
@@ -191,5 +193,17 @@ impl Into<String> for StringError {
 impl From<io::Error> for StringError {
     fn from(err: io::Error) -> Self {
         StringError(err.to_string())
+    }
+}
+
+impl PartialEq<str> for StringError {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl<'a> PartialEq<&'a str> for StringError {
+    fn eq(&self, other: &&'a str) -> bool {
+        self.0 == *other
     }
 }
