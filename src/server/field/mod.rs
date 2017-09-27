@@ -12,8 +12,9 @@ use std::str;
 use server::boundary::BoundaryFinder;
 use server::Internal;
 
-use {BodyChunk, StreamError};
+use std::fmt;
 
+use {BodyChunk, StreamError};
 
 mod collect;
 mod headers;
@@ -54,6 +55,15 @@ pub struct Field<S: Stream> {
     /// The data of this field in the request, represented as a stream of chunks.
     pub data: FieldData<S>,
     _priv: (),
+}
+
+impl<S: Stream> fmt::Debug for Field<S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Field")
+            .field("headers", &self.headers)
+            .field("data", &"<FieldData>")
+            .finish()
+    }
 }
 
 /// The data of a field in a multipart stream, as a stream of chunks.

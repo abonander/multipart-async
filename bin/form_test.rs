@@ -32,6 +32,7 @@ fn main() {
                             info!("got text field: {:?}", field);
                         }))
                     } else {
+                        info!("got file field: {:?}", field.headers);
                         Either::B(field.data.for_each(eat_ok))
                     };
 
@@ -49,7 +50,6 @@ fn main() {
 fn response<B: Into<Body>>(b: B) -> Response {
     Response::new().with_body(b.into())
 }
-
 
 fn eat_ok<T, E>(_val: T) -> Result<(), E> {
     Ok(())
