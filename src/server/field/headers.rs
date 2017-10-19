@@ -282,7 +282,8 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
 
 fn param_val(input: &str) -> Option<(&str, &str)> {
     // continue until the opening quote or the terminating semicolon
-    let mut tk_splits = input.splitn(2, &['"', ';'][..]);
+    static QUOTE_SEMICOLON: [char; 2] = ['"', ';'];
+    let mut tk_splits = input.splitn(2, &QUOTE_SEMICOLON[..]);
 
     let token = try_opt!(tk_splits.next()).trim();
     let rem = tk_splits.next().unwrap_or("");
