@@ -1,39 +1,11 @@
 Multipart-async [![Build Status](https://travis-ci.org/abonander/multipart-async.svg?branch=master)](https://travis-ci.org/abonander/multipart-async) [![On Crates.io](https://img.shields.io/crates/v/multipart-async.svg)](https://crates.io/crates/multipart-async)
 =========
 
-Client- and server-side abstractions for HTTP file uploads (POST requests with  `Content-Type: multipart/form-data`).
+**NOTE**: pre-alpha software, mostly untested and still in development. Early feedback is welcome, but use at your own risk.
 
-Supports several different HTTP crates.
+Futures-based client- and server-side abstractions for HTTP file uploads (POST requests with  `Content-Type: multipart/form-data`).
 
-###[Documentation](http://cybergeek94.github.io/multipart/doc/multipart/index.html)
-
-##Integrations
-
-Sample projects demonstrating how to use `multipart` with these crates are available under [`samples/`](samples).
-
-####[Hyper](http://hyper.rs) 
-via the `hyper` feature (enabled by default). 
-
-Client integration includes support for regular `hyper::client::Request` objects via `multipart::client::Multipart`, as well
-as integration with the new `hyper::Client` API via `multipart::client::lazy::Multipart` (new in 0.5).
-
-Server integration for `hyper::server::Request` via `multipart::server::Multipart`.
-
-####[Iron](http://ironframework.io) 
-via the `iron` feature.
-
-Provides regular server-side integration with `iron::Request` via `multipart::server::Multipart`, 
-as well as a convenient `BeforeMiddleware` implementation in `multipart::server::iron::Intercept`.
-
-####[tiny\_http](https://crates.io/crates/tiny_http/)
-via the `tiny_http` feature.
-
-Provides server-side integration with `tiny_http::Request` via `multipart::server::Multipart`.
-
-####[Nickel](http://nickel.rs/) <sup>(New in 0.6!)</sup>
-via the `nickel_` feature
-
-Provides server-side integration with `&mut nickel::Request` via `multipart::server::Multipart`. 
+Preliminary support for Hyper 0.11 is available via the `hyper` feature.
 
 License
 -------
