@@ -1,4 +1,4 @@
-Multipart [![Build Status](https://travis-ci.org/cybergeek94/multipart.svg?branch=master)](https://travis-ci.org/cybergeek94/multipart) [![On Crates.io](https://img.shields.io/crates/v/multipart.svg)](https://crates.io/crates/multipart)
+Multipart-async [![Build Status](https://travis-ci.org/abonander/multipart-async.svg?branch=master)](https://travis-ci.org/abonander/multipart-async) [![On Crates.io](https://img.shields.io/crates/v/multipart-async.svg)](https://crates.io/crates/multipart-async)
 =========
 
 Client- and server-side abstractions for HTTP file uploads (POST requests with  `Content-Type: multipart/form-data`).
