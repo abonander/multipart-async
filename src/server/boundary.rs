@@ -110,7 +110,9 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
                         return error("chunk too short to verify multipart boundary");
                     }
 
-                    if self.check_boundary_split(&partial.as_slice()[res.boundary_start()..], chunk.as_slice()) {
+                    let boundary_start = ::std::cmp::min(res.boundary_start(), partial.len());
+
+                    if self.check_boundary_split(&partial.as_slice()[boundary_start..], chunk.as_slice()) {
                         let (ret, first) = partial.split_at(res.boundary_start());
                         self.state = BoundarySplit(first, chunk);
 
