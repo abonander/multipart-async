@@ -14,10 +14,10 @@ pub use display_bytes::display_bytes as show_bytes;
 
 pub use futures::*;
 
-pub type PollOpt<T, E> = Poll<Option<T>, E>;
+pub type PollOpt<T, E> = Poll<Result<Option<T>, E>>;
 
-pub fn ready<R, E, T: Into<R>>(val: T) -> Poll<R, E> {
-    Ok(Async::Ready(val.into()))
+pub fn ready<R, E, T: Into<R>>(val: T) -> Poll<Result<R, E>> {
+    Async::Ready(val.into())
 }
 
 pub fn not_ready<T, E>() -> Poll<T, E> {

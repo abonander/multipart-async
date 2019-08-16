@@ -15,8 +15,10 @@ use {BodyChunk, StreamError};
 use self::State::*;
 
 use helpers::*;
+use futures::task::Context;
+use std::pin::Pin;
 
-pub type PollOpt<T, E> = Poll<Option<T>, E>;
+pub type PollOpt<T, E> = Poll<Result<Option<T>, E>>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
 pub struct BoundaryFinder<S: Stream> {
@@ -29,7 +31,7 @@ pub struct BoundaryFinder<S: Stream> {
 impl<S: Stream> BoundaryFinder<S> {
     pub fn new<B: Into<Vec<u8>>>(stream: S, boundary: B) -> BoundaryFinder<S> {
         BoundaryFinder {
-            stream: stream,
+            stream,
             state: State::Watching,
             boundary: boundary.into().into_boxed_slice(),
             chunk: Default::default(),
@@ -214,7 +216,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
 
     /// Returns `true` if another field should follow this boundary, `false` if the stream
     /// is at a logical end
-    pub fn consume_boundary(&mut self) -> Poll<bool, S::Error> {
+    pub fn consume_boundary(&mut self) -> Poll<Result<bool, S::Error>> {
         debug!("consuming boundary");
 
         while try_ready!(self.body_chunk()).is_some() {}
@@ -227,7 +229,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
         }
     }
 
-    fn confirm_boundary(&mut self, boundary: S::Item) -> Poll<bool, S::Error> {
+    fn confirm_boundary(&mut self, boundary: S::Item) -> Poll<Result<bool, S::Error>> {
         if boundary.len() < self.boundary_size(false) {
             return error(format!("boundary sequence too short: {}",
                                  show_bytes(boundary.as_slice())));
@@ -259,7 +261,7 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
         ready(!is_end)
     }
 
-    fn confirm_boundary_split(&mut self, first: S::Item, second: S::Item) -> Poll<bool, S::Error> {
+    fn confirm_boundary_split(&mut self, first: S::Item, second: S::Item) -> Poll<Result<bool, S::Error>> {
         let first = first.as_slice();
         let check_len = self.boundary_size(false) - first.len();
 
@@ -297,11 +299,10 @@ impl<S: Stream> BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamErro
 }
 
 impl<S: Stream> Stream for BoundaryFinder<S> where S::Item: BodyChunk, S::Error: StreamError {
-    type Item = S::Item;
-    type Error = S::Error;
+    type Item = Result<S::Item, S::Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.body_chunk()
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        unimplemented!()
     }
 }
 

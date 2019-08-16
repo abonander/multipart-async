@@ -15,7 +15,7 @@ extern crate httparse;
 extern crate twoway;
 
 use futures::{Poll, Stream};
-use futures::task::{self, Task};
+use futures::task::{self, Task, Context};
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -62,6 +62,7 @@ mod hyper;
 
 #[cfg(feature = "hyper")]
 pub use self::hyper::{MinusBody, MultipartService};
+use std::pin::Pin;
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
@@ -73,7 +74,7 @@ pub use self::hyper::{MinusBody, MultipartService};
 /// when it's time to move forward, so do avoid leaking that type or anything which contains it
 /// (`Field`, `ReadTextField`, or any stream combinators).
 pub struct Multipart<S: Stream> {
-    internal: Rc<Internal<S>>,
+    inner: BoundaryFinder<S>,
     read_hdr: ReadHeaders,
     consumed: bool,
 }
@@ -93,73 +94,64 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
         debug!("Boundary: {}", boundary);
 
         Multipart { 
-            internal: Rc::new(Internal::new(stream, boundary)),
+            inner: BoundaryFinder::new(stream, boundary),
             read_hdr: ReadHeaders::default(),
             consumed: false,
         }
     }
-}
 
-impl<S: Stream> Stream for Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
-    type Item = Field<S>;
-    type Error = S::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        // FIXME: combine this with the next statement when non-lexical lifetimes are added
-        // shouldn't be an issue anyway because the optimizer can fold these checks together
-        if Rc::get_mut(&mut self.internal).is_none() {
-            debug!("returning NotReady, field was in flight");
-            self.internal.park_curr_task();
-            return not_ready();
+    pub fn poll_field(&mut self) -> PollOpt<Field<S>, S::Error> {
+        if !self.inner.consume_boundary()? {
+            return ready(Ok(None));
         }
 
-        // We don't want to return another `Field` unless we have exclusive access.
-        let headers = {
-            let stream = Rc::get_mut(&mut self.internal).unwrap().stream.get_mut();
-
-            // only attempt to consume the boundary if it hasn't been done yet
-            self.consumed = self.consumed || try_ready!(stream.consume_boundary());
-
-            if !self.consumed {
-                return ready(None);
-            }
-
-            match try_ready!(self.read_hdr.read_headers(stream)) {
-                Some(headers) => headers,
-                None => return ready(None),
-            }
-        };
-
-        // the boundary should be consumed the next time poll() is ready to move forward
-        self.consumed = false;
-
-        info!("read field: {:?}", headers);
-
-        ready(field::new_field(headers, self.internal.clone()))
-    }
-}
-
-struct Internal<S: Stream> {
-    stream: Cell<BoundaryFinder<S>>,
-    waiting_task: Cell<Option<Task>>,
-}
-
-impl<S: Stream> Internal<S> {
-    fn new(stream: S, boundary: String) -> Self {
-        debug_assert!(boundary.starts_with("--"), "Boundary must start with --");
-
-        Internal {
-            stream: BoundaryFinder::new(stream, boundary).into(),
-            waiting_task: None.into(),
+        if let Some(headers) = self.read_hdr.read_headers(&mut self.inner)? {
+            ready(Ok(Some(field::new_field(headers, &mut self.inner))))
+        } else {
+            ready(Ok(None))
         }
     }
 
-    fn park_curr_task(&self) {
-        self.waiting_task.set(Some(task::current()));
+    pub fn fold_fields<T, F, Fut>(self, init: T, folder: F) -> FoldFields<F, T, S, Fut>
+    where F: for<'a> FnMut(Field<'a, S>, T) -> Fut, Fut: Future<Item = Result<T, S::Error>> {
+        FoldFields {
+            folder,
+            multipart: self,
+            state: Some(init),
+            fut: None,
+        }
     }
+}
 
-    fn notify_task(&self) {
-        self.waiting_task.take().map(|t| t.notify());
+pub struct FoldFields<F, T, S: Stream, Fut> {
+    folder: F,
+    multipart: Multipart<S>,
+    state: Option<T>,
+    fut: Option<Fut>,
+}
+
+impl<F, T, S, Fut> Future for FoldFields<F, T, S, Fut>
+where F: for<'a> FnMut(Field<'a, S>, T) -> Fut, Fut: Future<Item = Result<T, S::Error>>,
+S: Stream, S::Item: BodyChunk, S::Error: StreamError {
+    type Output = Result<T, S::Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        unsafe {
+            self.map_unchecked_mut(|this| {
+                loop {
+                    if let Some(ref mut fut) = this.fut {
+                        self.state = Some(Pin::new_unchecked(fut).poll()?);
+                    }
+
+                    if let Some(field) = this.multipart.poll_field()? {
+                        let new_fut = (this.folder)(
+                            this.state.expect(".poll() called after value returned"),
+                            field
+                        );
+                    }
+                }
+            })
+        }
     }
 }
 

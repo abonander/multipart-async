@@ -27,6 +27,9 @@ extern crate display_bytes;
 #[macro_use]
 extern crate futures;
 
+#[macro_use]
+extern crate pin_utils;
+
 //extern crate mime_guess;
 extern crate rand;
 

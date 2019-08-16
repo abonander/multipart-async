@@ -79,7 +79,7 @@ impl ReadHeaders {
         loop {
             trace!("read_headers state: accumulator: {}", show_bytes(&self.accumulator));
 
-            let chunk = match try_ready!(stream.poll()) {
+            let chunk = match ready!(stream.poll_next()) {
                 Some(chunk) => chunk,
                 None => return if !self.accumulator.is_empty() {
                     error("unexpected end of stream")

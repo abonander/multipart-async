@@ -22,14 +22,17 @@ mod headers;
 pub use self::headers::{FieldHeaders, ReadHeaders};
 
 pub use self::collect::{ReadTextField, TextField};
+use futures::task::Context;
+use std::pin::Pin;
 
-pub(super) fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<S>>) -> Field<S> {
+pub(super) fn new_field<S: Stream>(headers: FieldHeaders, stream: &mut BoundaryFinder<S>) -> Field<S> {
     let headers = Rc::new(headers);
 
     Field {
         headers: headers.clone(),
         data: FieldData {
-            headers, internal
+            headers,
+            stream
         },
         _priv: (),
     }
@@ -49,11 +52,11 @@ pub(super) fn new_field<S: Stream>(headers: FieldHeaders, internal: Rc<Internal<
 /// other mechanism), then the parent `Multipart` will never be able to yield the next field in the
 /// stream. The task waiting on the `Multipart` will also never be notified, which, depending on the
 /// event loop/reactor/executor implementation, may cause a deadlock.
-pub struct Field<S: Stream> {
+pub struct Field<'a, S: Stream + 'a> {
     /// The headers of this field, including the name, filename, and `Content-Type`, if provided.
     pub headers: Rc<FieldHeaders>,
     /// The data of this field in the request, represented as a stream of chunks.
-    pub data: FieldData<S>,
+    pub data: FieldData<'a, S>,
     _priv: (),
 }
 
@@ -69,21 +72,9 @@ impl<S: Stream> fmt::Debug for Field<S> {
 /// The data of a field in a multipart stream, as a stream of chunks.
 ///
 /// It may be read to completion via the `Stream` impl, or collected to a string with `read_text()`.
-///
-/// To avoid the next field being initialized before this one is done being read
-/// (in a linear stream), only one instance per `Multipart` instance is allowed at a time.
-/// A `Drop` implementation on `FieldData` is used to notify `Multipart` that this field is done
-/// being read, thus:
-///
-/// ### Warning About Leaks
-/// If this value is leaked (via `mem::forget()` or some other mechanism), then the parent
-/// `Multipart` will never be able to yield the next field in the stream. The task waiting on the
-/// `Multipart` will also never be notified, which, depending on the event loop/reactor/executor
-/// implementation, may cause a deadlock.
-// N.B.: must **never** be Clone!
-pub struct FieldData<S: Stream> {
+pub struct FieldData<'a, S: Stream + 'a> {
     headers: Rc<FieldHeaders>,
-    internal: Rc<Internal<S>>,
+    stream: &'a mut BoundaryFinder<S>,
 }
 
 impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
@@ -115,29 +106,19 @@ impl<S: Stream> FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
 
         collect::read_text(self.headers.clone(), self)
     }
-
-    fn stream_mut(&mut self) -> &mut BoundaryFinder<S> {
-        debug_assert!(Rc::strong_count(&self.internal) <= 2,
-                      "More than two copies of an `Rc<Internal>` at one time");
-
-        // This is safe as we have guaranteed exclusive access, the lifetime is tied to `self`,
-        // and is never null.
-        unsafe { &mut *self.internal.stream.as_ptr() }
-    }
 }
 
 impl<S: Stream> Stream for FieldData<S> where S::Item: BodyChunk, S::Error: StreamError {
-    type Item = S::Item;
-    type Error = S::Error;
+    type Item = Result<S::Item, S::Error>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.stream_mut().body_chunk()
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.stream.body_chunk()
     }
 }
 
 /// Notifies a task waiting on the parent `Multipart` that another field is available.
 impl<S: Stream> Drop for FieldData<S> {
     fn drop(&mut self) {
-        self.internal.notify_task();
+        self.stream.notify_task();
     }
 }
