@@ -1,14 +1,17 @@
 use futures::{Future, Stream};
-use futures::Async::*;
+use futures::Poll::*;
 
 use std::rc::Rc;
 use std::{fmt, str};
 
+use server::BodyStream;
 use {BodyChunk, StreamError};
 
 use super::FieldHeaders;
 
 use helpers::*;
+use futures::task::Context;
+use std::pin::Pin;
 
 enum ChunkStack<C> {
     Empty,
@@ -91,10 +94,10 @@ pub struct TextField {
 /// stream. The task waiting on the `Multipart` will also never be notified, which, depending on the
 /// event loop/reactor/executor implementation, may cause a deadlock.
 #[derive(Default)]
-pub struct ReadTextField<S: Stream> {
+pub struct ReadTextField<S: BodyStream> {
     stream: Option<S>,
     accum: String,
-    chunks: ChunkStack<S::Item>,
+    chunks: ChunkStack<S::Chunk>,
     /// The headers for the original field, provided as a convenience.
     pub headers: Rc<FieldHeaders>,
     /// The length limit for the string, in bytes, to avoid potential DoS attacks from
@@ -108,14 +111,14 @@ pub struct ReadTextField<S: Stream> {
 const DEFAULT_LIMIT: usize = 65536; // 65KiB--reasonable enough for one text field, right?
 const MAX_LIMIT: usize = 16_777_216; // 16MiB--highest sane value for one text field, IMO
 
-pub fn read_text<S: Stream>(headers: Rc<FieldHeaders>, data: S) -> ReadTextField<S> {
+pub fn read_text<S: BodyStream>(headers: Rc<FieldHeaders>, data: S) -> ReadTextField<S> {
     ReadTextField {
         headers, stream: Some(data), limit: DEFAULT_LIMIT, accum: String::new(),
         chunks: Default::default()
     }
 }
 
-impl<S: Stream> ReadTextField<S> {
+impl<S: BodyStream> ReadTextField<S> {
     /// Set the length limit, in bytes, for the collected text. If an incoming chunk is expected to
     /// push the string over this limit, an error is returned and the offending chunk is pushed back
     /// to the head of the stream.
@@ -160,8 +163,8 @@ impl<S: Stream> ReadTextField<S> {
     }
 }
 
-impl<S: Stream> ReadTextField<S> where S::Item: BodyChunk {
-    fn next_chunk(&mut self) -> PollOpt<S::Item, S::Error> {
+impl<S: BodyStream> ReadTextField<S> where S::Chunk: BodyChunk {
+    fn next_chunk(&mut self) -> PollOpt<S::Chunk, S::Error> {
         if let Some(chunk) = self.chunks.pop() {
             return ready(Some(chunk));
         }
@@ -175,23 +178,22 @@ impl<S: Stream> ReadTextField<S> where S::Item: BodyChunk {
 
     /// Try to poll for another chunk; if successful, return both of them, otherwise push the first
     /// chunk back.
-    fn another_chunk(&mut self, first: S::Item) -> PollOpt<(S::Item, S::Item), S::Error> {
+    fn another_chunk(&mut self, first: S::Chunk) -> PollOpt<(S::Chunk, S::Chunk), S::Error> {
         match self.next_chunk() {
-            Ok(Ready(Some(second))) => ready(Some((first, second))),
-            Ok(Ready(None)) => ready(None),
-            Ok(NotReady) => { self.chunks.push(first); not_ready() }
-            Err(e) => { self.chunks.push(first); Err(e) },
+            Ready(Ok(Some(second))) => ready(Some((first, second))),
+            Ready(Ok(None)) => ready(None),
+            Ready(Err(e)) => { self.chunks.push(first); Err(e) },
+            Pending => { self.chunks.push(first); not_ready() }
         }
     }
 }
 
-impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: StreamError {
-    type Item = TextField;
-    type Error = S::Error;
+impl<S: BodyStream> Future for ReadTextField<S> where S::Chunk: BodyChunk, S::Error: StreamError {
+    type Output = Result<TextField, S::Error>;
 
-    fn poll(&mut self) -> Poll<Self::Item, S::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            let chunk = match try_ready!(self.next_chunk()) {
+            let chunk = match self.next_chunk()? {
                 Some(val) => val,
                 _ => break,
             };
@@ -224,7 +226,7 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
             let needed_len =  char_width - invalid.len();
 
             // Get a second chunk or push the first chunk back
-            let (first, second) = match try_ready!(self.another_chunk(invalid)) {
+            let (first, second) = match self.another_chunk(invalid)? {
                 Some(pair) => pair,
                 // this also happens if we have some invalid bytes right at the end of the string
                 // should be rare and the end result is the same
@@ -276,13 +278,44 @@ impl<S: Stream> Future for ReadTextField<S> where S::Item: BodyChunk, S::Error: 
     }
 }
 
-impl<S: Stream> fmt::Debug for ReadTextField<S> {
+impl<S: BodyStream> fmt::Debug for ReadTextField<S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ReadFieldText")
             .field("accum", &self.accum)
             .field("headers", &self.headers)
             .field("limit", &self.limit)
             .finish()
+    }
+}
+
+impl<S: BodyStream> super::FieldData<'_, S> where S::Item: BodyChunk, S::Error: StreamError {
+    /// Get a `Future` which attempts to read the field data to a string.
+    ///
+    /// If a field is meant to be read as text, it will either have no content-type or
+    /// will have a content-type that starts with "text"; `FieldHeaders::is_text()` is
+    /// provided to help determine this.
+    ///
+    /// A default length limit for the string, in bytes, is set to avoid potential DoS attacks from
+    /// attackers running the server out of memory. If an incoming chunk is expected to push the
+    /// string over this limit, an error is returned. The limit value can be inspected and changed
+    /// on `ReadTextField` if desired.
+    ///
+    /// ### Charset
+    /// For simplicity, the default UTF-8 character set is assumed, as defined in
+    /// [IETF RFC 7578 Section 5.1.2](https://tools.ietf.org/html/rfc7578#section-5.1.2).
+    /// If the field body cannot be decoded as UTF-8, an error is returned.
+    ///
+    /// Decoding text in a different charset (except ASCII which
+    /// is compatible with UTF-8) is, currently, beyond the scope of this crate. However, as a
+    /// convention, web browsers will send `multipart/form-data` requests in the same
+    /// charset as that of the document (page or frame) containing the form, so if you only serve
+    /// ASCII/UTF-8 pages then you won't have to worry too much about decoding strange charsets.
+    pub fn read_text(self) -> ReadTextField<Self> {
+        if !self.headers.is_text() {
+            debug!("attempting to read a non-text field as text: {:?}", self.headers);
+        }
+
+        collect::read_text(self.headers.clone(), self)
     }
 }
 

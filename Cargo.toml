@@ -32,7 +32,7 @@ twoway = { version = "0.2", optional = true }
 
 [features]
 client = []
-default = ["hyper", "server", "client"]
+default = ["server"]
 server = ["twoway", "httparse"]
 # Use `Arc` instead of `Rc` where needed
 use_arc = []

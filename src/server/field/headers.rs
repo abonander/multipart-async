@@ -15,6 +15,8 @@ use { BodyChunk, StreamError};
 use self::httparse::{EMPTY_HEADER, Status};
 
 use helpers::*;
+use std::pin::Pin;
+use futures::task::Context;
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -69,23 +71,23 @@ impl FieldHeaders {
 }
 
 #[derive(Debug, Default)]
-pub struct ReadHeaders {
+pub(crate) struct ReadHeaders {
     accumulator: Vec<u8>
 }
 
 impl ReadHeaders {
-    pub fn read_headers<S: Stream>(&mut self, stream: &mut BoundaryFinder<S>) -> PollOpt<FieldHeaders, S::Error>
-    where S::Item: BodyChunk, S::Error: StreamError {
+    pub(crate) fn read_headers<S: TryStream>(&mut self, mut stream: Pin<&mut BoundaryFinder<S>>, cx: &mut Context) -> PollOpt<FieldHeaders, S::Error>
+    where S::Ok: BodyChunk, S::Error: StreamError {
         loop {
             trace!("read_headers state: accumulator: {}", show_bytes(&self.accumulator));
 
-            let chunk = match ready!(stream.poll_next()) {
+            let chunk = match ready!(stream.as_mut().poll_next(cx)?) {
                 Some(chunk) => chunk,
                 None => return if !self.accumulator.is_empty() {
-                    error("unexpected end of stream")
+                    ready_err("unexpected end of stream")
                 } else {
                     trace!("end of request reached");
-                    ready(None)
+                    Poll::Ready(None)
                 },
             };
 
@@ -95,26 +97,26 @@ impl ReadHeaders {
             if let Some(header_end) = twoway::find_bytes(chunk.as_slice(), b"\r\n\r\n") {
                 // Split after the double-CRLF because we don't want to yield it and httparse expects it
                 let (headers, rem) = chunk.split_at(header_end + 4);
-                stream.push_chunk(rem);
+                stream.as_mut().push_chunk(rem);
 
                 if !self.accumulator.is_empty() {
                     self.accumulator.extend_from_slice(headers.as_slice());
                     let headers = parse_headers(&self.accumulator)?;
                     self.accumulator.clear();
 
-                    return ready(Some(headers));
+                    return ready_ok(headers);
                 } else {
-                    return ready(Some(parse_headers(headers.as_slice())?));
+                    return ready_ok(parse_headers(headers.as_slice())?);
                 }
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
                 self.accumulator.extend_from_slice(head.as_slice());
-                stream.push_chunk(tail);
+                stream.as_mut().push_chunk(tail);
                 continue;
             }
 
             if self.accumulator.len().saturating_add(chunk.len()) > MAX_BUF_LEN {
-                return error("headers section too long or trailing double-CRLF missing");
+                return ready_err("headers section too long or trailing double-CRLF missing");
             }
 
             self.accumulator.extend_from_slice(chunk.as_slice());

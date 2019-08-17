@@ -114,7 +114,7 @@ mod test {
     #[test]
     fn test_into_poll() {
         assert_eq!(
-            Ok(Async::Ready(Some(Cow::Borrowed(&b"Hello, world!"[..])))),
+            Poll::Ready(Ok(Some(Cow::Borrowed(&b"Hello, world!"[..])))),
             into_poll("Hello, world!")
         );
     }

@@ -14,8 +14,8 @@
 extern crate httparse;
 extern crate twoway;
 
-use futures::{Poll, Stream};
-use futures::task::{self, Task, Context};
+use futures::{Poll, Stream, Future};
+use futures::task::{self, Context};
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -55,7 +55,8 @@ use helpers::*;
 
 use self::field::ReadHeaders;
 
-pub use self::field::{Field, FieldHeaders, FieldData, ReadTextField, TextField};
+pub use self::field::{Field, FieldHeaders, FieldData};
+// pub use self::field::{ReadTextField, TextField};
 
 #[cfg(feature = "hyper")]
 mod hyper;
@@ -73,7 +74,7 @@ use std::pin::Pin;
 /// `Field` at a time. A `Drop` implementation on `FieldData` is used to signal
 /// when it's time to move forward, so do avoid leaking that type or anything which contains it
 /// (`Field`, `ReadTextField`, or any stream combinators).
-pub struct Multipart<S: Stream> {
+pub struct Multipart<S: TryStream> {
     inner: BoundaryFinder<S>,
     read_hdr: ReadHeaders,
     consumed: bool,
@@ -82,7 +83,11 @@ pub struct Multipart<S: Stream> {
 // Q: why can't we just wrap up these bounds into a trait?
 // A: https://github.com/rust-lang/rust/issues/24616#issuecomment-112065997
 // (The workaround mentioned in a later comment doesn't seem to be worth the added complexity)
-impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
+impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
+    unsafe_pinned!(inner: BoundaryFinder<S>);
+    unsafe_unpinned!(read_hdr: ReadHeaders);
+    unsafe_unpinned!(consumed: bool);
+
     /// Construct a new `Multipart` with the given body reader and boundary.
     ///
     /// This will add the requisite `--` and CRLF (`\r\n`) to the boundary as per
@@ -100,20 +105,25 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
         }
     }
 
-    pub fn poll_field(&mut self) -> PollOpt<Field<S>, S::Error> {
-        if !self.inner.consume_boundary()? {
-            return ready(Ok(None));
+    pub fn poll_field(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<Field<S>, S::Error> {
+        if !ready!(self.as_mut().inner().consume_boundary(cx)?) {
+            return Poll::Ready(None);
         }
 
-        if let Some(headers) = self.read_hdr.read_headers(&mut self.inner)? {
-            ready(Ok(Some(field::new_field(headers, &mut self.inner))))
+        let maybe_headers = unsafe {
+            let this = self.as_mut().get_unchecked_mut();
+            ready!(this.read_hdr.read_headers(Pin::new_unchecked(&mut this.inner), cx)?)
+        };
+
+        if let Some(headers) = maybe_headers {
+            ready_ok(field::new_field(headers, self.inner()))
         } else {
-            ready(Ok(None))
+            Poll::Ready(None)
         }
     }
 
-    pub fn fold_fields<T, F, Fut>(self, init: T, folder: F) -> FoldFields<F, T, S, Fut>
-    where F: for<'a> FnMut(Field<'a, S>, T) -> Fut, Fut: Future<Item = Result<T, S::Error>> {
+    pub fn fold_fields<F, Fut>(self, init: Fut::Ok, folder: F) -> FoldFields<F, S, Fut>
+    where F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut, Fut: TryFuture<Error = S::Error> {
         FoldFields {
             folder,
             multipart: self,
@@ -123,34 +133,45 @@ impl<S: Stream> Multipart<S> where S::Item: BodyChunk, S::Error: StreamError {
     }
 }
 
-pub struct FoldFields<F, T, S: Stream, Fut> {
+pub struct FoldFields<F, S: TryStream, Fut: TryFuture> {
     folder: F,
     multipart: Multipart<S>,
-    state: Option<T>,
+    state: Option<Fut::Ok>,
     fut: Option<Fut>,
 }
 
-impl<F, T, S, Fut> Future for FoldFields<F, T, S, Fut>
-where F: for<'a> FnMut(Field<'a, S>, T) -> Fut, Fut: Future<Item = Result<T, S::Error>>,
-S: Stream, S::Item: BodyChunk, S::Error: StreamError {
-    type Output = Result<T, S::Error>;
+impl<F, S: TryStream, Fut: TryFuture> FoldFields<F, S, Fut> {
+    unsafe_pinned!(multipart: Multipart<S>);
+    unsafe_pinned!(fut: Option<Fut>);
+    unsafe_unpinned!(state: Option<Fut::Ok>);
+    unsafe_unpinned!(folder: F);
+}
+
+
+impl<F, S, Fut> Future for FoldFields<F, S, Fut>
+where F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut, Fut: TryFuture<Error = S::Error>,
+S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
+    type Output = Result<Fut::Ok, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        unsafe {
-            self.map_unchecked_mut(|this| {
-                loop {
-                    if let Some(ref mut fut) = this.fut {
-                        self.state = Some(Pin::new_unchecked(fut).poll()?);
-                    }
+        loop {
+            if let Some(fut) = self.as_mut().fut().as_pin_mut() {
+                *self.as_mut().state() = Some(ready!(fut.try_poll(cx)?));
+            }
 
-                    if let Some(field) = this.multipart.poll_field()? {
-                        let new_fut = (this.folder)(
-                            this.state.expect(".poll() called after value returned"),
-                            field
-                        );
-                    }
+            let state = self.as_mut().state()
+                .take().expect(".poll() called after value returned");
+
+            unsafe {
+                let this = self.as_mut().get_unchecked_mut();
+                if let Some(field) = ready!(Pin::new_unchecked(&mut this.multipart).poll_field(cx)?) {
+                    let next_state = (this.folder)(field, state);
+                    Pin::new_unchecked(&mut this.fut).set(Some(next_state));
+                } else {
+                    return ready_ok(state);
                 }
-            })
+            }
+
         }
     }
 }

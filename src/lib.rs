@@ -17,7 +17,8 @@
 //!
 //! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library 
 //! for client and/or server depending on which other feature flags are set.
-#![deny(missing_docs)]
+#![allow(unused_imports, deprecated)] // FIXME: hiding irrelevant warnings during prototyping
+// #![deny(missing_docs)]
 #[macro_use] extern crate log;
 //extern crate env_logger;
 
@@ -47,6 +48,8 @@ use rand::Rng;
 use std::borrow::Cow;
 use std::str::Utf8Error;
 use std::{io, ops};
+use futures::{Stream, Future};
+use std::process::Output;
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]
@@ -58,7 +61,8 @@ pub mod server;
 mod helpers;
 
 #[doc(hidden)]
-pub mod mock;
+#[cfg(any(test, feature = "mock"))]
+//pub mod mock;
 
 /*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;
