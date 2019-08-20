@@ -230,12 +230,17 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
     pub fn consume_boundary(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<bool, S::Error>> {
         debug!("consuming boundary");
 
-        while ready!(self.as_mut().body_chunk(cx)?).is_some() {}
+        while ready!(self.as_mut().body_chunk(cx)?).is_some() {
+            trace!("body chunk loop!");
+        }
 
         match mem::replace(self.as_mut().state(), Watching) {
             Boundary(bnd) => self.confirm_boundary(bnd),
-            BoundarySplit(first, second) => self.as_mut().confirm_boundary_split(first, second),
-            End => ready_ok(false),
+            BoundarySplit(first, second) => self.confirm_boundary_split(first, second),
+            End => {
+                *self.state() = End;
+                ready_ok(false)
+            },
             state => unreachable!("invalid state: {:?}", state),
         }
     }
@@ -432,11 +437,18 @@ mod test {
     #[test]
     fn test_empty_stream() {
         let finder = BoundaryFinder::new(mock_stream!(), BOUNDARY);
-        assert!(!block_on(|cx| finder.consume_boundary(cx)).unwrap());
+        pin_mut!(finder);
+        assert!(!block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
     }
 
     #[test]
-    fn test_one_field() {
-
+    fn test_one_boundary() {
+        let _ = ::env_logger::init();
+        let finder = BoundaryFinder::new(
+            mock_stream!(b"--boundary"),
+            BOUNDARY
+        );
+        pin_mut!(finder);
+        assert!(block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
     }
 }

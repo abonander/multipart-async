@@ -43,6 +43,8 @@ pub extern crate mime;
 
 pub extern crate http;
 
+extern crate env_logger;
+
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
