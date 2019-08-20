@@ -110,11 +110,16 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
                     // For sanity
                     if chunk.is_empty() { return ready_ok(chunk); }
 
-                    return self.check_chunk(chunk);
+                    if let Some(chunk) = self.as_mut().check_chunk(chunk) {
+                        return ready_ok(chunk);
+                    }
                 },
-                Remainder(rem) => return self.as_mut().check_chunk(rem),
+                Remainder(rem) => if let Some(chunk) = self.as_mut().check_chunk(rem) {
+                    return ready_ok(chunk);
+                },
                 Partial(partial, res) => {
                     let chunk = try_ready_opt!(self.as_mut().stream().try_poll_next(cx); Partial(partial, res));
+                    trace!("Partial got second chunk: {:?}", chunk.as_slice());
                     let needed_len = (self.boundary_size(res.incl_crlf))
                         .saturating_sub(partial.len());
 
@@ -143,7 +148,7 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
         }
     }
 
-    fn check_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) -> PollOpt<S::Ok, S::Error> {
+    fn check_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) -> Option<S::Ok> {
         trace!("check chunk: {}", show_bytes(chunk.as_slice()));
 
         if let Some(res) = self.find_boundary(&chunk) {
@@ -155,6 +160,7 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
                 // Either partial boundary, or boundary but not the two bytes after it
                 set_state!(self = Partial(chunk, res));
                 trace!("partial boundary: {:?}", self.state);
+                None
             } else {
                 let (ret, bnd) = chunk.split_at(res.idx);
 
@@ -170,15 +176,13 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
                 trace!("boundary located: {:?} returning chunk: {}", self.state, show_bytes(ret.as_slice()));
 
                 if !ret.is_empty() {
-                    return ready_ok(ret);
+                    Some(ret)
                 } else {
-                    return Ready(None);
+                    None
                 }
-            };
-
-            return Pending;
+            }
         } else {
-            ready_ok(chunk)
+            Some(chunk)
         }
     }
 
@@ -233,6 +237,9 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
         while ready!(self.as_mut().body_chunk(cx)?).is_some() {
             trace!("body chunk loop!");
         }
+
+        trace!("consume_boundary() after-loop state: {:?} pushed_chunk: {:?}", self.state,
+               self.chunk.as_ref().map(BodyChunk::as_slice));
 
         match mem::replace(self.as_mut().state(), Watching) {
             Boundary(bnd) => self.confirm_boundary(bnd),
@@ -449,6 +456,19 @@ mod test {
             BOUNDARY
         );
         pin_mut!(finder);
-        assert!(block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
+        assert!(!block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
+    }
+
+    #[test]
+    fn test_one_empty_field() {
+        let _ = ::env_logger::init();
+        let finder = BoundaryFinder::new(
+            mock_stream!(b"--boundary", b"\r\n", b"\r\n--boundary--"),
+            BOUNDARY
+        );
+        pin_mut!(finder);
+        assert_eq!(block_on(|cx| finder.as_mut().consume_boundary(cx)), Ok(true));
+        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
+        assert_eq!(block_on(|cx| finder.as_mut().consume_boundary(cx)), Ok(false));
     }
 }

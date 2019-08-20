@@ -41,7 +41,7 @@ macro_rules! impl_into_result {
 }
 
 // hacky but add lengths as needed
-impl_into_result!(10);
+impl_into_result!(2, 10, 14);
 
 impl IntoResult for Result<&'static [u8], StringError> {
     fn into_result(self) -> Self {
