@@ -43,6 +43,10 @@ pub extern crate mime;
 
 pub extern crate http;
 
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+
 use rand::Rng;
 
 use std::borrow::Cow;
@@ -50,6 +54,10 @@ use std::str::Utf8Error;
 use std::{io, ops};
 use futures::{Stream, Future};
 use std::process::Output;
+
+#[cfg(test)]
+#[macro_use]
+mod mock;
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]
@@ -59,10 +67,6 @@ use std::process::Output;
 pub mod server;
 
 mod helpers;
-
-#[doc(hidden)]
-#[cfg(any(test, feature = "mock"))]
-//pub mod mock;
 
 /*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;

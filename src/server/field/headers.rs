@@ -76,6 +76,10 @@ pub(crate) struct ReadHeaders {
 }
 
 impl ReadHeaders {
+    pub (crate) fn is_reading_headers(&self) -> bool {
+        !self.accumulator.is_empty()
+    }
+
     pub(crate) fn read_headers<S: TryStream>(&mut self, mut stream: Pin<&mut BoundaryFinder<S>>, cx: &mut Context) -> PollOpt<FieldHeaders, S::Error>
     where S::Ok: BodyChunk, S::Error: StreamError {
         loop {

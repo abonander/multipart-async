@@ -416,151 +416,27 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
-/* FIXME: when `mock_stream!()` is fully implemented
 #[cfg(test)]
 mod test {
-    use super::{BoundaryFinder, ready, not_ready, show_bytes};
+    use super::BoundaryFinder;
+    use futures::executor;
+    use futures::task::Context;
 
-    use server::BodyChunk;
+    const BOUNDARY: &str = "--boundary";
 
-    use futures::{Future, Stream, Poll};
-    use futures::Async::*;
-
-    use std::fmt::Debug;
-    use std::io;
-    use std::io::prelude::*;
-
-    const BOUNDARY: &'static str = "--boundary";
-
-    type TestingFinder = BoundaryFinder<MockStream>;
-
-    macro_rules! mock_finder (
-        ($($input:tt)*) => (
-            BoundaryFinder::new(mock!($($input)*), BOUNDARY)
-        );
-    );
-
-    macro_rules! mock (
-        ($($item:expr $(,$wait:expr)*);*) => (
-            MockStream::new(vec![$(mock_item!($item $(, $wait)*)),*])
-        )
-    );
-
-    macro_rules! mock_item (
-        ($item:expr) => (($item, 0));
-        ($item:expr, $($wait:expr)*) => (($item, $($wait)*));
-    );
-
-    fn assert_part(finder: &mut TestingFinder, right: &[&[u8]]) {
-        assert_boundary(finder, false);
-
-        let mut right = right.iter();
-
-        loop {
-            let left_item = loop {
-                match finder.poll().expect("Error from stream") {
-                    Ready(item) => break item,
-                    _ => (),
-                }
-            };
-
-            let right_item = right.next();
-
-            match (left_item, right_item) {
-                // Option only implements T == T
-                (Some(ref left), Some(ref right)) if left == *right => (),
-                (None, None) => break,
-                (left, right) => panic!("Failed assertion: `{:?} == {:?}`", left, right),
-            }
-        }
+    fn block_on<T, F>(f: F) -> T where F: FnMut(&mut Context) -> futures::Poll<T> {
+        use futures::future;
+        executor::block_on(future::poll_fn(f))
     }
 
-    fn assert_end(finder: &mut TestingFinder) {
-        assert_boundary(finder, true)
+    #[test]
+    fn test_empty_stream() {
+        let finder = BoundaryFinder::new(mock_stream!(), BOUNDARY);
+        assert!(!block_on(|cx| finder.consume_boundary(cx)).unwrap());
     }
 
-    fn assert_boundary(finder: &mut TestingFinder, is_end: bool) {
-        loop {
-            match finder.body_chunk().expect("Error from BoundaryFinder") {
-                Ready(Some(chunk)) => panic!("Unexpected chunk from BoundaryFinder: {}", show_bytes(chunk.as_slice())),
-                Ready(None) => break,
-                NotReady => (),
-            }
-        }
+    #[test]
+    fn test_one_field() {
 
-        loop {
-            match finder.consume_boundary().expect("Error from BoundaryFinder") {
-                Ready(val) => {
-                    // consume_boundary() returns false when the end boundary is found
-                    assert_eq!(val, !is_end, "Found wrong kind of boundary");
-                    break;
-                },
-                _ => (),
-            }
-        }
-    }
-
-    macro_rules! test_request {
-        ($testnm:ident {$($chunks:tt)*} [$($part:expr),+]) => (
-            #[test]
-            fn $testnm() {
-                let _ = ::env_logger::init();
-
-                let mut finder = mock_finder!($($chunks)*);
-
-                $(assert_part(&mut finder, &$part);)+
-                assert_end(&mut finder);
-            }
-        )
-    }
-
-    test_request! {
-        simple
-        {
-            b"--boundary\r\n\
-            asdf1234\r\n\
-            --boundary--"
-        }
-        [
-            [b"asdf1234"]
-        ]
-    }
-
-    test_request! {
-        split_repeat_once
-        {
-            b"--boundary\r\n", 1;
-            b"asdf1234\r\n\
-            --boundary--"
-        }
-        [
-            [b"asdf1234"]
-        ]
-    }
-
-    test_request! {
-        split_mid_bnd
-        {
-            b"--boun";
-            b"dary\r\n\
-            asdf1234\r\n\
-            --boundary--"
-        }
-        [
-            [b"asdf1234"]
-        ]
-    }
-
-    test_request! {
-        two_parts
-        {
-            b"--boundary\r\n\
-            asdf1234\r\n\
-            --boundary\r\n\
-            hjkl5678\r\n\
-            --boundary--"
-        }
-        [[b"asdf1234"], [b"hjkl5678"]]
     }
 }
-*/

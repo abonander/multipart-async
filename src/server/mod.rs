@@ -66,14 +66,6 @@ pub use self::hyper::{MinusBody, MultipartService};
 use std::pin::Pin;
 
 /// The server-side implementation of `multipart/form-data` requests.
-///
-/// This will parse the incoming stream into `Field` instances via its
-/// `Stream` implementation.
-///
-/// To maintain consistency in the underlying stream, this will not yield more than one
-/// `Field` at a time. A `Drop` implementation on `FieldData` is used to signal
-/// when it's time to move forward, so do avoid leaking that type or anything which contains it
-/// (`Field`, `ReadTextField`, or any stream combinators).
 pub struct Multipart<S: TryStream> {
     inner: BoundaryFinder<S>,
     read_hdr: ReadHeaders,
@@ -105,17 +97,27 @@ impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError
         }
     }
 
-    pub fn poll_field(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<Field<S>, S::Error> {
+    pub fn poll_next_field_headers(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<FieldHeaders, S::Error> {
         if !ready!(self.as_mut().inner().consume_boundary(cx)?) {
             return Poll::Ready(None);
         }
 
-        let maybe_headers = unsafe {
+        unsafe {
             let this = self.as_mut().get_unchecked_mut();
-            ready!(this.read_hdr.read_headers(Pin::new_unchecked(&mut this.inner), cx)?)
-        };
+            this.read_hdr.read_headers(Pin::new_unchecked(&mut this.inner), cx)
+        }
+    }
 
-        if let Some(headers) = maybe_headers {
+    pub fn poll_body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
+        if !self.read_hdr.is_reading_headers() {
+            self.inner().body_chunk(cx)
+        } else {
+            Poll::Ready(None)
+        }
+    }
+
+    pub fn poll_field(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<Field<S>, S::Error> {
+        if let Some(headers) = ready!(self.as_mut().poll_next_field_headers(cx)?) {
             ready_ok(field::new_field(headers, self.inner()))
         } else {
             Poll::Ready(None)
