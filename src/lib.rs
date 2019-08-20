@@ -22,19 +22,11 @@
 #[macro_use] extern crate log;
 //extern crate env_logger;
 
-extern crate bytes;
-extern crate display_bytes;
-
 #[macro_use]
 extern crate futures;
 
 #[macro_use]
 extern crate pin_utils;
-
-//extern crate mime_guess;
-extern crate rand;
-
-//extern crate tempdir;
 
 #[cfg(feature = "hyper")]
 pub extern crate hyper;
@@ -42,8 +34,6 @@ pub extern crate hyper;
 pub extern crate mime;
 
 pub extern crate http;
-
-extern crate env_logger;
 
 #[cfg(test)]
 #[macro_use]

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::mem;
 use std::str::Utf8Error;
 
-use StreamError;
+use crate::StreamError;
 
 pub use display_bytes::display_bytes as show_bytes;
 

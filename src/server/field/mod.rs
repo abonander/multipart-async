@@ -9,11 +9,11 @@ use futures::{Stream, Poll, TryStream};
 use std::rc::Rc;
 use std::str;
 
-use server::boundary::BoundaryFinder;
+use crate::server::boundary::BoundaryFinder;
 
 use std::fmt;
 
-use {BodyChunk, StreamError};
+use crate::{BodyChunk, StreamError};
 
 // mod collect;
 mod headers;

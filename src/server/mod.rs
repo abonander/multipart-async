@@ -11,9 +11,6 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
-extern crate httparse;
-extern crate twoway;
-
 use futures::{Poll, Stream, Future};
 use futures::task::{self, Context};
 
@@ -22,7 +19,7 @@ use std::rc::Rc;
 
 use self::boundary::BoundaryFinder;
 
-use {BodyChunk, StreamError};
+use crate::{BodyChunk, StreamError};
 
 macro_rules! try_opt (
     ($expr:expr) => (
@@ -41,17 +38,17 @@ macro_rules! ret_err (
 
 macro_rules! fmt_err(
     ($string:expr) => (
-        ::helpers::error($string)
+        crate::helpers::error($string)
     );
     ($string:expr, $($args:tt)*) => (
-        ::helpers::error(format!($string, $($args)*))
+        crate::helpers::error(format!($string, $($args)*))
     );
 );
 
 mod boundary;
 mod field;
 
-use helpers::*;
+use crate::helpers::*;
 
 use self::field::ReadHeaders;
 
@@ -108,7 +105,7 @@ impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError
         }
     }
 
-    pub fn poll_body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
+    pub fn poll_body_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
         if !self.read_hdr.is_reading_headers() {
             self.inner().body_chunk(cx)
         } else {

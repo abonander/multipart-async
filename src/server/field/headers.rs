@@ -7,14 +7,13 @@ use mime::{self, Mime, Name};
 use std::ascii::AsciiExt;
 use std::str;
 
-use server::{httparse, twoway};
-use server::boundary::BoundaryFinder;
+use crate::server::boundary::BoundaryFinder;
 
-use { BodyChunk, StreamError};
+use crate::{BodyChunk, StreamError};
 
-use self::httparse::{EMPTY_HEADER, Status};
+use httparse::{EMPTY_HEADER, Status};
 
-use helpers::*;
+use crate::helpers::*;
 use std::pin::Pin;
 use futures::task::Context;
 
@@ -339,7 +338,7 @@ fn test_parse_keyval() {
 
 #[test]
 fn test_parse_headers() {
-    use StringError;
+    use crate::StringError;
 
     let parse_headers = parse_headers::<StringError>;
 
@@ -465,7 +464,7 @@ fn test_parse_headers() {
 
 #[test]
 fn test_parse_headers_errors() {
-    use StringError;
+    use crate::StringError;
 
     let parse_headers = parse_headers::<StringError>;
 

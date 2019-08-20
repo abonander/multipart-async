@@ -4,7 +4,7 @@ use futures::stream::{self, Stream, StreamExt};
 use futures::{Poll, TryStream};
 use std::thread;
 use std::time::Duration;
-use StringError;
+use crate::StringError;
 
 lazy_static! {
     pub(crate) static ref SENDER: mpsc::Sender<()> = {
@@ -41,7 +41,7 @@ macro_rules! impl_into_result {
 }
 
 // hacky but add lengths as needed
-impl_into_result!(2, 10, 14);
+impl_into_result!(2, 10, 12, 14);
 
 impl IntoResult for Result<&'static [u8], StringError> {
     fn into_result(self) -> Self {
@@ -68,6 +68,6 @@ where I: IntoIterator<Item = Result<&'static [u8], StringError>> {
 /// Get a stream which yields the `$elem` series punctuated by nondeterministic `Pending` values
 macro_rules! mock_stream {
     ($($elem:expr),*) => {
-        ::mock::stream(vec![$(::mock::IntoResult::into_result($elem)),*])
+        crate::mock::stream(vec![$(crate::mock::IntoResult::into_result($elem)),*])
     };
 }

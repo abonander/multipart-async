@@ -10,12 +10,12 @@ use futures::{Poll, Stream};
 
 use std::{fmt, mem};
 
-use {BodyChunk, StreamError};
+use crate::{BodyChunk, StreamError};
 
 use self::State::*;
 use futures::Poll::*;
 
-use helpers::*;
+use crate::helpers::*;
 use futures::task::Context;
 use std::pin::Pin;
 
@@ -129,7 +129,14 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
                     }
 
                     if self.check_boundary_split(&partial.as_slice()[res.boundary_start()..], chunk.as_slice()) {
-                        let (ret, first) = partial.split_at(res.boundary_start());
+                        let (mut ret, first) = partial.split_at(res.boundary_start());
+
+                        if ret.len() >= 2 && res.incl_crlf {
+                            let ret_len = ret.len();
+                            // trim the preceeding CRLF
+                            ret = ret.split_at(ret_len - 2).0;
+                        }
+
                         *self.as_mut().state() = BoundarySplit(first, chunk);
 
                         if !ret.is_empty() {
@@ -149,7 +156,11 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
     }
 
     fn check_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) -> Option<S::Ok> {
-        trace!("check chunk: {}", show_bytes(chunk.as_slice()));
+        trace!("check chunk: {:?}", chunk.as_slice());
+
+        if chunk.is_empty() {
+            return None;
+        }
 
         if let Some(res) = self.find_boundary(&chunk) {
             debug!("boundary found: {:?}", res);
@@ -201,12 +212,12 @@ impl<S> BoundaryFinder<S> where S: TryStream, S::Ok: BodyChunk, S::Error: Stream
             .or_else(||
                 // EDGE CASE: the bytes of the newline before the boundary are at the end
                 // of the chunk
-                if len > 2 && &chunk[len - 2 ..] == &*b"\r\n" {
+                if len >= 2 && &chunk[len - 2 ..] == &*b"\r\n" {
                     Some(SearchResult {
                         idx: len - 2,
                         incl_crlf: true,
                     })
-                } else if len > 1 && chunk[len - 1] == b'\r' {
+                } else if len >= 1 && chunk[len - 1] == b'\r' {
                     Some(SearchResult {
                         idx: len - 1,
                         incl_crlf: true
@@ -360,7 +371,7 @@ impl<B: BodyChunk> fmt::Debug for State<B> {
             Watching => f.write_str("State::Watching"),
             Partial(ref bnd, res) => write!(f, "State::Partial({}, {:?})", show_bytes(bnd.as_slice()), res),
             Boundary(ref bnd) => write!(f, "State::Boundary({})", show_bytes(bnd.as_slice())),
-            BoundarySplit(ref first, ref second) => write!(f, "State::BoundarySplit({}, {})",
+            BoundarySplit(ref first, ref second) => write!(f, "State::BoundarySplit(\"{}\", \"{}\")",
                                                            show_bytes(first.as_slice()),
                                                            show_bytes(second.as_slice())),
             Remainder(ref rem) => write!(f, "State::Remainder({})", show_bytes(rem.as_slice())),
@@ -463,7 +474,7 @@ mod test {
     fn test_one_empty_field() {
         let _ = ::env_logger::init();
         let finder = BoundaryFinder::new(
-            mock_stream!(b"--boundary", b"\r\n", b"\r\n--boundary--"),
+            mock_stream!(b"--boundary", b"\r\n", b"\r\n", b"--boundary--"),
             BOUNDARY
         );
         pin_mut!(finder);
