@@ -1,12 +1,13 @@
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
 extern crate env_logger;
 extern crate futures;
 extern crate hyper;
 extern crate multipart_async as multipart;
 
-use futures::Future;
 use futures::future::Either;
+use futures::Future;
 use futures::Stream;
 
 use hyper::server::Http;
@@ -24,24 +25,28 @@ fn main() {
     let addr: SocketAddr = "127.0.0.1:8080".parse().expect("invalid socket address");
 
     Http::new()
-        .bind(&addr, ||
+        .bind(&addr, || {
             Ok(MultipartService {
                 multipart: |(multi, _rest): (Multipart<Body>, _)| {
-                    let read_field = |field: Field<Body>| if field.headers.is_text() {
-                        Either::A(field.data.read_text().map(|field| {
-                            info!("got text field: {:?}", field);
-                        }))
-                    } else {
-                        info!("got file field: {:?}", field.headers);
-                        Either::B(field.data.for_each(eat_ok))
+                    let read_field = |field: Field<Body>| {
+                        if field.headers.is_text() {
+                            Either::A(field.data.read_text().map(|field| {
+                                info!("got text field: {:?}", field);
+                            }))
+                        } else {
+                            info!("got file field: {:?}", field.headers);
+                            Either::B(field.data.for_each(eat_ok))
+                        }
                     };
 
-                    multi.for_each(read_field).map(|_| response("success"))
+                    multi
+                        .for_each(read_field)
+                        .map(|_| response("success"))
                         .or_else(|err| Ok(response(err.to_string())))
                 },
-                normal: |_| Ok(response(FORM))
+                normal: |_| Ok(response(FORM)),
             })
-        )
+        })
         .expect("failed to bind socket")
         .run()
         .expect("error running server");

@@ -4,7 +4,7 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use futures::{Stream, Poll, TryStream};
+use futures::{Poll, Stream, TryStream};
 
 use std::rc::Rc;
 use std::str;
@@ -25,15 +25,15 @@ pub(crate) use self::headers::ReadHeaders;
 use futures::task::Context;
 use std::pin::Pin;
 
-pub(super) fn new_field<S: TryStream>(headers: FieldHeaders, stream: Pin<&mut BoundaryFinder<S>>) -> Field<S> {
+pub(super) fn new_field<S: TryStream>(
+    headers: FieldHeaders,
+    stream: Pin<&mut BoundaryFinder<S>>,
+) -> Field<S> {
     let headers = Rc::new(headers);
 
     Field {
         headers: headers.clone(),
-        data: FieldData {
-            headers,
-            stream
-        },
+        data: FieldData { headers, stream },
         _priv: (),
     }
 }
@@ -81,7 +81,11 @@ impl<'a, S: TryStream + 'a> FieldData<'a, S> {
     unsafe_unpinned!(stream: Pin<&'a mut BoundaryFinder<S>>);
 }
 
-impl<S: TryStream> Stream for FieldData<'_, S> where S::Ok: BodyChunk, S::Error: StreamError {
+impl<S: TryStream> Stream for FieldData<'_, S>
+where
+    S::Ok: BodyChunk,
+    S::Error: StreamError,
+{
     type Item = Result<S::Ok, S::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {

@@ -10,8 +10,8 @@ use bytes::Bytes;
 
 use futures::future::{Either, IntoFuture};
 
-pub use hyper::{Body, Chunk, Error, Headers, HttpVersion, Method, Request, Response, Uri};
 pub use hyper::server::Service;
+pub use hyper::{Body, Chunk, Error, Headers, HttpVersion, Method, Request, Response, Uri};
 
 use mime::{self, Mime};
 
@@ -47,18 +47,27 @@ pub struct MinusBody {
 impl MinusBody {
     fn from_req(req: Request<Body>) -> (Body, Self) {
         let (method, uri, version, headers, body) = req.deconstruct();
-        (body, MinusBody { method, uri, version, headers })
+        (
+            body,
+            MinusBody {
+                method,
+                uri,
+                version,
+                headers,
+            },
+        )
     }
 }
 
 fn get_boundary(req: &Request<Body>) -> Option<String> {
-    req.headers().get::<ContentType>()
+    req.headers()
+        .get::<ContentType>()
         .and_then(|&ContentType(ref mime)| get_boundary_mime(mime))
 }
 
 fn get_boundary_mime(mime: &Mime) -> Option<String> {
     if mime.type_() == mime::MULTIPART && mime.subtype() == mime::FORM_DATA {
-        mime.get_param(mime::BOUNDARY).map(|n|n.as_ref().into())
+        mime.get_param(mime::BOUNDARY).map(|n| n.as_ref().into())
     } else {
         None
     }
@@ -91,10 +100,13 @@ pub struct MultipartService<M, N> {
     pub normal: N,
 }
 
-impl<M, MFut, N, NFut, Bd> Service for MultipartService<M, N> where M: Fn((Multipart<Body>, MinusBody)) -> MFut,
-                                                                MFut: IntoFuture<Item = Response<Bd>, Error = Error>,
-                                                                N: Fn(Request) -> NFut,
-                                                                NFut: IntoFuture<Item = Response<Bd>, Error = Error> {
+impl<M, MFut, N, NFut, Bd> Service for MultipartService<M, N>
+where
+    M: Fn((Multipart<Body>, MinusBody)) -> MFut,
+    MFut: IntoFuture<Item = Response<Bd>, Error = Error>,
+    N: Fn(Request) -> NFut,
+    NFut: IntoFuture<Item = Response<Bd>, Error = Error>,
+{
     type Request = Request;
     type Response = Response<Bd>;
     type Error = Error;

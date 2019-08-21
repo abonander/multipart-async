@@ -16,18 +16,27 @@ pub use futures::*;
 
 pub type PollOpt<T, E> = Poll<Option<Result<T, E>>>;
 
-pub fn ready_ok<R, T, E>(val: T) -> Poll<R> where R: From<Result<T, E>> {
+pub fn ready_ok<R, T, E>(val: T) -> Poll<R>
+where
+    R: From<Result<T, E>>,
+{
     Poll::Ready(Ok(val).into())
 }
 
-pub fn error<T, E: Into<Cow<'static, str>>, E_: StreamError, R>(e: E) -> R where R: From<Result<T, E_>> {
+pub fn error<T, E: Into<Cow<'static, str>>, E_: StreamError, R>(e: E) -> R
+where
+    R: From<Result<T, E_>>,
+{
     match e.into() {
         Cow::Owned(string) => Err(E_::from_string(string).into()).into(),
         Cow::Borrowed(str) => Err(E_::from_str(str)).into(),
     }
 }
 
-pub fn ready_err<T, E: Into<Cow<'static, str>>, E_: StreamError, R>(e: E) -> Poll<R> where R: From<Result<T, E_>> {
+pub fn ready_err<T, E: Into<Cow<'static, str>>, E_: StreamError, R>(e: E) -> Poll<R>
+where
+    R: From<Result<T, E_>>,
+{
     match e.into() {
         Cow::Owned(string) => Poll::Ready(Err(E_::from_string(string).into()).into()),
         Cow::Borrowed(str) => Poll::Ready(Err(E_::from_str(str)).into()),

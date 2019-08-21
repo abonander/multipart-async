@@ -7,19 +7,20 @@
 //! Client- and server-side abstractions for HTTP `multipart/form-data` requests using asynchronous
 //! I/O.
 //!
-//! Features: 
-//! 
+//! Features:
+//!
 //! * `client` (default): Enable the client-side abstractions for multipart requests. If the
 //! `hyper` feature is also set, enables integration with the Hyper HTTP client API.
 //!
 //! * `server` (default): Enable the server-side abstractions for multipart requests. If the
 //! `hyper` feature is also set, enables integration with the Hyper HTTP server API.
 //!
-//! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library 
+//! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library
 //! for client and/or server depending on which other feature flags are set.
 #![allow(unused_imports, deprecated)] // FIXME: hiding irrelevant warnings during prototyping
-// #![deny(missing_docs)]
-#[macro_use] extern crate log;
+                                      // #![deny(missing_docs)]
+#[macro_use]
+extern crate log;
 //extern crate env_logger;
 
 #[macro_use]
@@ -41,11 +42,11 @@ extern crate lazy_static;
 
 use rand::Rng;
 
+use futures::{Future, Stream};
 use std::borrow::Cow;
+use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops};
-use futures::{Stream, Future};
-use std::process::Output;
 
 #[cfg(test)]
 #[macro_use]
@@ -106,7 +107,9 @@ impl BodyChunk for Vec<u8> {
         self
     }
 
-    fn into_vec(self) -> Vec<u8> { self }
+    fn into_vec(self) -> Vec<u8> {
+        self
+    }
 }
 
 impl<'a> BodyChunk for &'a [u8] {
@@ -121,7 +124,9 @@ impl<'a> BodyChunk for &'a [u8] {
 
 impl<'a> BodyChunk for Cow<'a, [u8]> {
     fn split_at(self, idx: usize) -> (Self, Self) {
-        fn cow_tup<'a, T: Into<Cow<'a, [u8]>>>((left, right): (T, T)) -> (Cow<'a, [u8]>, Cow<'a, [u8]>) {
+        fn cow_tup<'a, T: Into<Cow<'a, [u8]>>>(
+            (left, right): (T, T),
+        ) -> (Cow<'a, [u8]>, Cow<'a, [u8]>) {
             (left.into(), right.into())
         }
 

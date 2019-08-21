@@ -11,8 +11,8 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
-use futures::{Poll, Stream, Future};
 use futures::task::{self, Context};
+use futures::{Future, Poll, Stream};
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -52,7 +52,7 @@ use crate::helpers::*;
 
 use self::field::ReadHeaders;
 
-pub use self::field::{Field, FieldHeaders, FieldData};
+pub use self::field::{Field, FieldData, FieldHeaders};
 // pub use self::field::{ReadTextField, TextField};
 
 #[cfg(feature = "hyper")]
@@ -72,7 +72,12 @@ pub struct Multipart<S: TryStream> {
 // Q: why can't we just wrap up these bounds into a trait?
 // A: https://github.com/rust-lang/rust/issues/24616#issuecomment-112065997
 // (The workaround mentioned in a later comment doesn't seem to be worth the added complexity)
-impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
+impl<S> Multipart<S>
+where
+    S: TryStream,
+    S::Ok: BodyChunk,
+    S::Error: StreamError,
+{
     unsafe_pinned!(inner: BoundaryFinder<S>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
     unsafe_unpinned!(consumed: bool);
@@ -87,21 +92,25 @@ impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError
 
         debug!("Boundary: {}", boundary);
 
-        Multipart { 
+        Multipart {
             inner: BoundaryFinder::new(stream, boundary),
             read_hdr: ReadHeaders::default(),
             consumed: false,
         }
     }
 
-    pub fn poll_next_field_headers(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<FieldHeaders, S::Error> {
+    pub fn poll_next_field_headers(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> PollOpt<FieldHeaders, S::Error> {
         if !ready!(self.as_mut().inner().consume_boundary(cx)?) {
             return Poll::Ready(None);
         }
 
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
-            this.read_hdr.read_headers(Pin::new_unchecked(&mut this.inner), cx)
+            this.read_hdr
+                .read_headers(Pin::new_unchecked(&mut this.inner), cx)
         }
     }
 
@@ -122,7 +131,10 @@ impl<S> Multipart<S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError
     }
 
     pub fn fold_fields<F, Fut>(self, init: Fut::Ok, folder: F) -> FoldFields<F, S, Fut>
-    where F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut, Fut: TryFuture<Error = S::Error> {
+    where
+        F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut,
+        Fut: TryFuture<Error = S::Error>,
+    {
         FoldFields {
             folder,
             multipart: self,
@@ -146,10 +158,14 @@ impl<F, S: TryStream, Fut: TryFuture> FoldFields<F, S, Fut> {
     unsafe_unpinned!(folder: F);
 }
 
-
 impl<F, S, Fut> Future for FoldFields<F, S, Fut>
-where F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut, Fut: TryFuture<Error = S::Error>,
-S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
+where
+    F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut,
+    Fut: TryFuture<Error = S::Error>,
+    S: TryStream,
+    S::Ok: BodyChunk,
+    S::Error: StreamError,
+{
     type Output = Result<Fut::Ok, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -158,19 +174,22 @@ S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
                 *self.as_mut().state() = Some(ready!(fut.try_poll(cx)?));
             }
 
-            let state = self.as_mut().state()
-                .take().expect(".poll() called after value returned");
+            let state = self
+                .as_mut()
+                .state()
+                .take()
+                .expect(".poll() called after value returned");
 
             unsafe {
                 let this = self.as_mut().get_unchecked_mut();
-                if let Some(field) = ready!(Pin::new_unchecked(&mut this.multipart).poll_field(cx)?) {
+                if let Some(field) = ready!(Pin::new_unchecked(&mut this.multipart).poll_field(cx)?)
+                {
                     let next_state = (this.folder)(field, state);
                     Pin::new_unchecked(&mut this.fut).set(Some(next_state));
                 } else {
                     return ready_ok(state);
                 }
             }
-
         }
     }
 }

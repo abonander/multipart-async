@@ -1,10 +1,10 @@
+use crate::StringError;
 use futures::channel::mpsc;
 use futures::executor::block_on_stream;
 use futures::stream::{self, Stream, StreamExt};
 use futures::{Poll, TryStream};
 use std::thread;
 use std::time::Duration;
-use crate::StringError;
 
 lazy_static! {
     pub(crate) static ref SENDER: mpsc::Sender<()> = {
@@ -41,7 +41,13 @@ macro_rules! impl_into_result {
 }
 
 // hacky but add lengths as needed
-impl_into_result!(2, 10, 12, 14);
+impl_into_result!(2, 4, 5, 7, 10, 12, 14);
+
+impl IntoResult for StringError {
+    fn into_result(self) -> Result<&'static [u8], StringError> {
+        Err(self)
+    }
+}
 
 impl IntoResult for Result<&'static [u8], StringError> {
     fn into_result(self) -> Self {
@@ -49,14 +55,17 @@ impl IntoResult for Result<&'static [u8], StringError> {
     }
 }
 
-impl IntoResult for &'static str {
+// too much of a footgun, wrap it in `StringError`
+/*impl IntoResult for &'static str {
     fn into_result(self) -> Result<&'static [u8], StringError> {
         Err(StringError(self.into()))
     }
-}
+}*/
 
 pub(crate) fn stream<I>(iter: I) -> impl TryStream<Ok = &'static [u8], Error = StringError>
-where I: IntoIterator<Item = Result<&'static [u8], StringError>> {
+where
+    I: IntoIterator<Item = Result<&'static [u8], StringError>>,
+{
     let mut tx = SENDER.clone();
     let mut iter = iter.into_iter();
     stream::poll_fn(move |cx| {
