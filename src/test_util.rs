@@ -1,10 +1,13 @@
-use crate::StringError;
-use futures::channel::mpsc;
-use futures::executor::block_on_stream;
-use futures::stream::{self, Stream, StreamExt};
-use futures::{Poll, TryStream};
 use std::thread;
 use std::time::Duration;
+
+use futures::{Poll, TryStream};
+use futures::channel::mpsc;
+use futures::executor;
+use futures::executor::block_on_stream;
+use futures::stream::{self, Stream, StreamExt};
+use futures::task::Context;
+use crate::StringError;
 
 lazy_static! {
     pub(crate) static ref SENDER: mpsc::Sender<()> = {
@@ -77,6 +80,14 @@ where
 /// Get a stream which yields the `$elem` series punctuated by nondeterministic `Pending` values
 macro_rules! mock_stream {
     ($($elem:expr),*) => {
-        crate::mock::stream(vec![$(crate::mock::IntoResult::into_result($elem)),*])
+        crate::test_util::stream(vec![$(crate::test_util::IntoResult::into_result($elem)),*])
     };
+}
+
+pub fn block_on<T, F>(f: F) -> T
+    where
+        F: FnMut(&mut Context) -> futures::Poll<T>,
+{
+    use futures::future;
+    executor::block_on(future::poll_fn(f))
 }

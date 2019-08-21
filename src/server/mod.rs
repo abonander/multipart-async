@@ -202,3 +202,33 @@ pub trait RequestExt: Sized {
     /// Convert `Self` into `Self::Multipart` if applicable.
     fn into_multipart(self) -> Result<Self::Multipart, Self>;
 }
+
+#[cfg(test)]
+mod test {
+    use super::Multipart;
+    use crate::test_util::block_on;
+
+    const BOUNDARY: &'static str = "--boundary";
+
+    #[test]
+    fn test_empty_body() {
+        let _ = ::env_logger::init();
+        let multipart = Multipart::with_body(
+            mock_stream!(),
+            BOUNDARY
+        );
+        pin_mut!(multipart);
+        assert_eq!(block_on(|cx| multipart.as_mut().poll_next_field_headers(cx)), None);
+    }
+
+    #[test]
+    fn test_no_headers() {
+        let _ = ::env_logger::init();
+        let multipart = Multipart::with_body(
+            mock_stream!(b"--boundary\r\n", b"\r\n--boundary--"),
+            BOUNDARY
+        );
+        pin_mut!(multipart);
+        assert_eq!(block_on(|cx| multipart.as_mut().poll_next_field_headers(cx)), None);
+    }
+}

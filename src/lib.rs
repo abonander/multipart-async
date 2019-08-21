@@ -50,7 +50,7 @@ use std::{io, ops};
 
 #[cfg(test)]
 #[macro_use]
-mod mock;
+mod test_util;
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]

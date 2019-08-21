@@ -534,18 +534,10 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod test {
     use super::BoundaryFinder;
     use crate::StringError;
-    use futures::executor;
-    use futures::task::Context;
+
+    use crate::test_util::block_on;
 
     const BOUNDARY: &str = "--boundary";
-
-    fn block_on<T, F>(f: F) -> T
-    where
-        F: FnMut(&mut Context) -> futures::Poll<T>,
-    {
-        use futures::future;
-        executor::block_on(future::poll_fn(f))
-    }
 
     #[test]
     fn test_empty_stream() {
