@@ -22,7 +22,7 @@ use std::pin::Pin;
 pub type PollOpt<T, E> = Poll<Option<Result<T, E>>>;
 
 /// A struct implementing `Read` and `BufRead` that will yield bytes until it sees a given sequence.
-pub(crate) struct BoundaryFinder<S: TryStream> {
+pub struct BoundaryFinder<S: TryStream> {
     stream: S,
     state: State<S::Ok>,
     boundary: Box<[u8]>,

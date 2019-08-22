@@ -59,6 +59,9 @@ mod test_util;
 #[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
+
 mod helpers;
 
 /*#[cfg(all(test, feature = "client", feature = "server"))]
@@ -179,10 +182,12 @@ pub trait StreamError: From<io::Error> {
 
 impl StreamError for io::Error {}
 
+/// Not a stable API
+#[doc(hidden)]
 #[derive(Debug, Eq, PartialEq)]
-struct StringError(String);
+pub struct StringError(String);
 
-impl StreamError for StringError {
+impl crate::StreamError for StringError {
     fn from_str(str: &'static str) -> Self {
         StringError(str.into())
     }
@@ -198,8 +203,8 @@ impl Into<String> for StringError {
     }
 }
 
-impl From<io::Error> for StringError {
-    fn from(err: io::Error) -> Self {
+impl From<std::io::Error> for StringError {
+    fn from(err: std::io::Error) -> Self {
         StringError(err.to_string())
     }
 }

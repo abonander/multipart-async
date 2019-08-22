@@ -74,16 +74,16 @@ impl FieldHeaders {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ReadHeaders {
+pub struct ReadHeaders {
     accumulator: Vec<u8>,
 }
 
 impl ReadHeaders {
-    pub(crate) fn is_reading_headers(&self) -> bool {
+    pub fn is_reading_headers(&self) -> bool {
         !self.accumulator.is_empty()
     }
 
-    pub(crate) fn read_headers<S: TryStream>(
+    pub fn read_headers<S: TryStream>(
         &mut self,
         mut stream: Pin<&mut BoundaryFinder<S>>,
         cx: &mut Context,

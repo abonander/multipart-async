@@ -1,0 +1,2 @@
+# maintain CRLF line endings in fuzzing dictionary
+fuzz/dict/* eol=crlf

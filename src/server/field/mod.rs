@@ -19,7 +19,7 @@ use crate::{BodyChunk, StreamError};
 mod headers;
 
 pub use self::headers::FieldHeaders;
-pub(crate) use self::headers::ReadHeaders;
+pub use self::headers::ReadHeaders;
 
 //pub use self::collect::{ReadTextField, TextField};
 use futures::task::Context;

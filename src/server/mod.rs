@@ -62,6 +62,12 @@ mod hyper;
 pub use self::hyper::{MinusBody, MultipartService};
 use std::pin::Pin;
 
+#[cfg(feature = "fuzzing")]
+pub(crate) mod fuzzing {
+    pub use super::boundary::BoundaryFinder;
+    pub use super::field::ReadHeaders;
+}
+
 /// The server-side implementation of `multipart/form-data` requests.
 pub struct Multipart<S: TryStream> {
     inner: BoundaryFinder<S>,
