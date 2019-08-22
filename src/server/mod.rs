@@ -62,7 +62,7 @@ mod hyper;
 pub use self::hyper::{MinusBody, MultipartService};
 use std::pin::Pin;
 
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fuzzing {
     pub use super::boundary::BoundaryFinder;
     pub use super::field::ReadHeaders;

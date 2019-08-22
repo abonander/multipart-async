@@ -59,7 +59,7 @@ mod test_util;
 #[cfg(feature = "server")]
 pub mod server;
 
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
 
 mod helpers;
