@@ -150,6 +150,13 @@ where
                     };
 
                     trace!("Partial got second chunk: {}", show_bytes(chunk.as_slice()));
+
+                    if !self.is_boundary_prefix(partial.as_slice(), chunk.as_slice(), res) {
+                        // partial + chunk don't make a boundary prefix, return the partial
+                        set_state!(self = Remainder(chunk));
+                        return ready_ok(partial);
+                    }
+
                     let needed_len =
                         (self.boundary_size(res.incl_crlf)).saturating_sub(partial.len());
 
@@ -241,6 +248,17 @@ where
         twoway::find_bytes(chunk.as_slice(), &self.boundary)
             .map(|idx| check_crlf(chunk.as_slice(), idx))
             .or_else(|| self.partial_find_boundary(chunk))
+    }
+
+    fn is_boundary_prefix(&self, first: &[u8], second: &[u8], res: SearchResult) -> bool {
+        let maybe_prefix = first.iter().chain(second);
+
+        if res.incl_crlf {
+            maybe_prefix.zip(b"\r\n".iter().chain(&*self.boundary))
+                .all(|(l, r)| l == r)
+        } else {
+            maybe_prefix.zip(&*self.boundary).all(|(l, r)| l == r)
+        }
     }
 
     fn partial_find_boundary(&self, chunk: &S::Ok) -> Option<SearchResult> {

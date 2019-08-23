@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "display_bytes"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -264,7 +264,7 @@ name = "multipart-async"
 version = "0.0.2"
 dependencies = [
  "bytes 0.4.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "display_bytes 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "display_bytes 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-preview 0.3.0-alpha.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-test-preview 0.3.0-alpha.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -529,7 +529,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum cc 1.0.40 (registry+https://github.com/rust-lang/crates.io-index)" = "b548a4ee81fccb95919d4e22cfea83c7693ebfd78f0495493178db20b3139da7"
 "checksum cfg-if 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)" = "b486ce3ccf7ffd79fdeb678eac06a9e6c09fc88d33836340becb8fffe87c5e33"
 "checksum clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5067f5bb2d80ef5d68b4c87db81601f0b75bca627bc2ef76b141d7b846a3c6d9"
-"checksum display_bytes 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a03c165d6d28ab058a3ca0f0d17e26f5dce4c8aa858c041119cf461d11d4f946"
+"checksum display_bytes 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "fa333c37992bc9a2ca345cac27e7f150e97740a92daaeb488c98292d83329803"
 "checksum env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "aafcde04e90a5226a6443b7aabdb016ba2f8307c847d524724bd9b346dd1a2d3"
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
 "checksum fuchsia-cprng 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"

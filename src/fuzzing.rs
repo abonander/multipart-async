@@ -65,13 +65,12 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
 
     loop {
         match finder.as_mut().consume_boundary(cx) {
-            Ready(res) => {
-                assert!(
-                    res.expect("failed to read starting boundary"),
-                    "didn't find starting boundary"
-                );
+            Ready(Ok(true)) => {
                 break
             },
+            Ready(Ok(false)) => panic!("failed to read starting boundary"),
+            // errors mean we handled the problem correctly
+            Ready(Err(_)) => return,
             Pending => (),
         }
     }
@@ -80,8 +79,7 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
 
     loop {
         match finder.as_mut().body_chunk(cx) {
-            Ready(Some(res)) => {
-                let chunk = res.expect("failed to read body chunk");
+            Ready(Some(Ok(chunk))) => {
                 assert_ne!(chunk, &[]);
                 assert!(
                     remaining.starts_with(chunk),
@@ -90,6 +88,7 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
                 );
                 remaining = &remaining[chunk.len()..];
             },
+            Ready(Some(Err(_))) => return,
             Ready(None) => {
                 assert_eq!(remaining, &[]);
                 break;
@@ -100,13 +99,11 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
 
     loop {
         match finder.as_mut().consume_boundary(cx) {
-            Ready(res) => {
-                assert!(
-                    !res.expect("failed to read ending boundary"),
-                    "didn't find ending boundary"
-                );
+            Ready(Ok(false)) => {
                 break
             },
+            Ready(Ok(true)) => panic!("didn't find ending boundary"),
+            Ready(Err(_)) => return,
             Pending => (),
         }
     }
@@ -116,12 +113,14 @@ pub const BOUNDARY: &str = "--boundary";
 
 #[test]
 fn test_fuzz_boundary_finder() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
     fuzz_boundary_finder(b"--boundary\r\n");
 }
 
 #[test]
 fn test_fuzz_boundary_finder_field() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
+    fuzz_boundary_finder_field(b"\r");
+    fuzz_boundary_finder_field(b"\r\n--boundar");
     fuzz_boundary_finder_field(b"asdf1234ghjk5678zxcvnm90-=`023458nsdzfdl-");
 }
