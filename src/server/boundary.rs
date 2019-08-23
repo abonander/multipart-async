@@ -133,24 +133,32 @@ where
                     }
                 }
                 Partial(partial, res) => {
-                    let chunk =
-                        if let Some(chunk) = ready!(self.as_mut().stream().try_poll_next(cx)?) {
-                            chunk
-                        } else {
+                    let chunk = match self.as_mut().stream().try_poll_next(cx)? {
+                        Ready(Some(chunk)) => chunk,
+                        Ready(None) => {
                             set_state!(self = End);
                             return ready_err(format!(
-                            "unable to verify multipart boundary; expected: \"{}\" found: \"{}\"",
-                            show_bytes(&self.boundary),
-                            show_bytes(partial.as_slice())
-                        ));
-                        };
-                    trace!("Partial got second chunk: {:?}", chunk.as_slice());
+                                "unable to verify multipart boundary; expected: \"{}\" found: \"{}\"",
+                                show_bytes(&self.boundary),
+                                show_bytes(partial.as_slice())
+                            ));
+                        },
+                        Pending => {
+                            set_state!(self = Partial(partial, res));
+                            return Pending;
+                        }
+                    };
+
+                    trace!("Partial got second chunk: {}", show_bytes(chunk.as_slice()));
                     let needed_len =
                         (self.boundary_size(res.incl_crlf)).saturating_sub(partial.len());
 
                     if needed_len > chunk.len() {
                         // hopefully rare
-                        return ready_err("chunk too short to verify multipart boundary");
+                        return ready_err(
+                            format!("needed {} more bytes to verify boundary, got {}",
+                                       needed_len, chunk.len())
+                        );
                     }
 
                     if self.check_boundary_split(
@@ -184,7 +192,7 @@ where
     }
 
     fn check_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) -> Option<S::Ok> {
-        trace!("check chunk: {:?}", chunk.as_slice());
+        trace!("check chunk: '{}'", show_bytes(chunk.as_slice()));
 
         if chunk.is_empty() {
             return None;

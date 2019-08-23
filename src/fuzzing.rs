@@ -16,7 +16,7 @@ use crate::helpers::show_bytes;
 /// Deterministically chunk test data so the fuzzer can discover new code paths
 pub fn chunk_test_data<'d>(mut data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
     // this ensures the test boundary will always be split between chunks
-    stream::iter(data.chunks(BOUNDARY.len() / 2))
+    stream::iter(data.chunks(BOUNDARY.len() - 1))
         .map(Ok)
         .interleave_pending()
 }

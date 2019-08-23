@@ -5,12 +5,11 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 use std::borrow::Cow;
+use std::fmt;
 use std::mem;
 use std::str::Utf8Error;
 
 use crate::StreamError;
-
-pub use display_bytes::display_bytes as show_bytes;
 
 pub use futures::*;
 
@@ -49,4 +48,8 @@ pub fn utf8_err<T, E: StreamError>(e: Utf8Error) -> Result<T, E> {
 
 pub fn replace_default<T: Default>(dest: &mut T) -> T {
     mem::replace(dest, T::default())
+}
+
+pub fn show_bytes(bytes: &[u8]) -> impl fmt::Display + '_ {
+    display_bytes::HEX_UTF8.clone().min_str_len(1).display_bytes(bytes)
 }
