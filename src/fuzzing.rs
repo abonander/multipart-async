@@ -90,7 +90,10 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
                 );
                 remaining = &remaining[chunk.len()..];
             },
-            Ready(None) => assert_eq!(remaining, &[]),
+            Ready(None) => {
+                assert_eq!(remaining, &[]);
+                break;
+            },
             Pending => (),
         }
     }
