@@ -16,3 +16,6 @@
 
 .idea/
 *.iml
+
+fuzz/target
+fuzz/output
