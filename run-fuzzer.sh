@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-case $1 in
+case "$1" in
 *boundary*)
   DICT=dict/boundary
   ;;

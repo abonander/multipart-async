@@ -110,7 +110,7 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
 }
 
 pub fn fuzz_read_headers(test_data: &[u8]) {
-    if twoway::find_bytes(test_data, BOUNDARY.as_bytes()) { return }
+    if twoway::find_bytes(test_data, BOUNDARY.as_bytes()).is_some() { return }
 
     let finder = BoundaryFinder::new(chunk_test_data(test_data), BOUNDARY);
     pin_mut!(finder);
@@ -118,6 +118,7 @@ pub fn fuzz_read_headers(test_data: &[u8]) {
     let ref mut cx = noop_context();
     let mut read_headers = ReadHeaders::default();
 
+    while let Pending = read_headers.read_headers(finder.as_mut(), cx) { }
 }
 
 pub const BOUNDARY: &str = "--boundary";
@@ -134,4 +135,11 @@ fn test_fuzz_boundary_finder_field() {
     fuzz_boundary_finder_field(b"\r");
     fuzz_boundary_finder_field(b"\r\n--boundar");
     fuzz_boundary_finder_field(b"asdf1234ghjk5678zxcvnm90-=`023458nsdzfdl-");
+}
+
+#[test]
+fn test_fuzz_read_headers() {
+    let _ = env_logger::try_init();
+    fuzz_read_headers(b"");
+    fuzz_read_headers(b"Content-Disposition: multipart/form-data; name=foo");
 }
