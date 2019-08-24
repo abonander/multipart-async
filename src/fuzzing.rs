@@ -109,6 +109,17 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
     }
 }
 
+pub fn fuzz_read_headers(test_data: &[u8]) {
+    if twoway::find_bytes(test_data, BOUNDARY.as_bytes()) { return }
+
+    let finder = BoundaryFinder::new(chunk_test_data(test_data), BOUNDARY);
+    pin_mut!(finder);
+
+    let ref mut cx = noop_context();
+    let mut read_headers = ReadHeaders::default();
+
+}
+
 pub const BOUNDARY: &str = "--boundary";
 
 #[test]
