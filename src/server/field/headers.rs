@@ -50,7 +50,8 @@ pub struct FieldHeaders {
     /// Any additional headers, standard or otherwise, for this field as provided by the client.
     ///
     /// The size of this map will be limited internally.
-    pub ext: HeaderMap,
+    pub ext_headers: HeaderMap,
+    pub(crate) _backcompat: (),
 }
 
 impl FieldHeaders {
@@ -243,7 +244,7 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
                 fmt_err!("error on multipart field header \"{}\": {}", header.name, e)
             })?;
 
-            out_headers.ext.append(hdr_name, hdr_val);
+            out_headers.ext_headers.append(hdr_name, hdr_val);
         }
     }
 

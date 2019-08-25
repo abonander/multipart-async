@@ -212,29 +212,60 @@ pub trait RequestExt: Sized {
 #[cfg(test)]
 mod test {
     use super::Multipart;
-    use crate::test_util::block_on;
+    use crate::test_util::mock_stream;
+    use crate::server::FieldHeaders;
 
-    const BOUNDARY: &'static str = "--boundary";
+    const BOUNDARY: &str = "boundary";
 
     #[test]
     fn test_empty_body() {
-        let _ = ::env_logger::init();
+        let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
-            mock_stream!(),
+            mock_stream(&[]),
             BOUNDARY
         );
         pin_mut!(multipart);
-        assert_eq!(block_on(|cx| multipart.as_mut().poll_next_field_headers(cx)), None);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_next_field_headers(cx), None);
     }
 
     #[test]
     fn test_no_headers() {
-        let _ = ::env_logger::init();
+        let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
-            mock_stream!(b"--boundary\r\n", b"\r\n--boundary--"),
+            mock_stream(&[b"--boundary", b"\r\n", b"\r\n", b"--boundary--"]),
             BOUNDARY
         );
         pin_mut!(multipart);
-        assert_eq!(block_on(|cx| multipart.as_mut().poll_next_field_headers(cx)), None);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_next_field_headers(cx), None);
+    }
+
+    #[test]
+    fn test_single_field() {
+        let _ = ::env_logger::try_init();
+        let multipart = Multipart::with_body(
+            mock_stream(&[
+                b"--boundary\r", b"\n",
+                b"Content-Disposition:",
+                b" form-data; name=",
+                b"\"foo\"",
+                b"\r\n\r\n",
+                b"field data",
+                b"\r", b"\n--boundary--"
+            ]),
+            BOUNDARY
+        );
+        pin_mut!(multipart);
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_next_field_headers(cx),
+            Some(Ok(FieldHeaders {
+                name: "foo".into(),
+                filename: None,
+                content_type: None,
+                ext_headers: Default::default(),
+                _backcompat: (),
+            }))
+        );
+
     }
 }

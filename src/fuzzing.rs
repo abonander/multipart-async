@@ -6,6 +6,8 @@ use futures::Poll::*;
 use futures_test::stream::StreamTestExt;
 use futures_test::task::noop_context;
 
+use crate::test_util::BOUNDARY;
+
 use std::cmp;
 
 pub use crate::server::fuzzing::*;
@@ -14,15 +16,15 @@ pub use crate::StringError;
 use crate::helpers::show_bytes;
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
-pub fn chunk_test_data<'d>(mut data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
+pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
     // this ensures the test boundary will always be split between chunks
     stream::iter(data.chunks(BOUNDARY.len() - 1))
         .map(Ok)
         .interleave_pending()
 }
 
-pub fn fuzz_boundary_finder(test_data: &[u8]) {
-    let finder = BoundaryFinder::new(chunk_test_data(test_data), BOUNDARY);
+pub fn fuzz_boundary_finder(fuzz_data: &[u8]) {
+    let finder = BoundaryFinder::new(chunk_fuzz_data(fuzz_data), BOUNDARY);
     pin_mut!(finder);
 
     let ref mut cx = noop_context();
@@ -48,15 +50,15 @@ pub fn fuzz_boundary_finder(test_data: &[u8]) {
 }
 
 /// Fuzz BoundaryFinder taking the input as the data of a field
-pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
+pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
     // ensure the boundary doesn't appear in the input data
-    if twoway::find_bytes(test_data, BOUNDARY.as_bytes()).is_some() { return; }
+    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() { return; }
 
     let start = format!("{}\r\n", BOUNDARY);
     let end = format!("\r\n{}--", BOUNDARY);
-    let stream = chunk_test_data(start.as_bytes())
-        .chain(chunk_test_data(test_data))
-        .chain(chunk_test_data(end.as_bytes()));
+    let stream = chunk_fuzz_data(start.as_bytes())
+        .chain(chunk_fuzz_data(fuzz_data))
+        .chain(chunk_fuzz_data(end.as_bytes()));
 
     let finder = BoundaryFinder::new(stream, BOUNDARY);
     pin_mut!(finder);
@@ -75,7 +77,7 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
         }
     }
 
-    let mut remaining = test_data;
+    let mut remaining = fuzz_data;
 
     loop {
         match finder.as_mut().body_chunk(cx) {
@@ -109,10 +111,10 @@ pub fn fuzz_boundary_finder_field(test_data: &[u8]) {
     }
 }
 
-pub fn fuzz_read_headers(test_data: &[u8]) {
-    if twoway::find_bytes(test_data, BOUNDARY.as_bytes()).is_some() { return }
+pub fn fuzz_read_headers(fuzz_data: &[u8]) {
+    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() { return }
 
-    let finder = BoundaryFinder::new(chunk_test_data(test_data), BOUNDARY);
+    let finder = BoundaryFinder::new(chunk_fuzz_data(fuzz_data), BOUNDARY);
     pin_mut!(finder);
 
     let ref mut cx = noop_context();
@@ -120,8 +122,6 @@ pub fn fuzz_read_headers(test_data: &[u8]) {
 
     while let Pending = read_headers.read_headers(finder.as_mut(), cx) { }
 }
-
-pub const BOUNDARY: &str = "--boundary";
 
 #[test]
 fn test_fuzz_boundary_finder() {

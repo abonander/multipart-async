@@ -292,7 +292,7 @@ where
     }
 
     fn check_boundary_split(&self, first: &[u8], second: &[u8]) -> bool {
-        let check_len = self.boundary.len() - first.len();
+        let check_len = self.boundary.len().saturating_sub(first.len());
 
         second.len() >= check_len
             && first
@@ -561,32 +561,31 @@ mod test {
     use super::BoundaryFinder;
     use crate::StringError;
 
-    use crate::test_util::block_on;
-
-    const BOUNDARY: &str = "--boundary";
+    use crate::test_util::*;
 
     #[test]
     fn test_empty_stream() {
-        let finder = BoundaryFinder::new(mock_stream!(), BOUNDARY);
+        let finder = BoundaryFinder::new(mock_stream(&[]), BOUNDARY);
         pin_mut!(finder);
-        assert!(!block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
+        ready_assert_eq!(|cx| finder.as_mut().consume_boundary(cx), Ok(false));
     }
 
     #[test]
     fn test_one_boundary() {
-        let _ = ::env_logger::init();
-        let finder = BoundaryFinder::new(mock_stream!(b"--boundary"), BOUNDARY);
+        let _ = ::env_logger::try_init();
+        let finder = BoundaryFinder::new(mock_stream(&[b"--boundary\r\n"]), BOUNDARY);
         pin_mut!(finder);
-        assert!(!block_on(|cx| finder.as_mut().consume_boundary(cx)).unwrap());
+        ready_assert_eq!(|cx| finder.as_mut().consume_boundary(cx), Ok(true));
+        ready_assert_eq!(|cx| finder.as_mut().consume_boundary(cx), Ok(false));
     }
 
     #[test]
     fn test_one_incomplete_boundary() {
-        let _ = ::env_logger::init();
-        let finder = BoundaryFinder::new(mock_stream!(b"--bound"), BOUNDARY);
+        let _ = ::env_logger::try_init();
+        let finder = BoundaryFinder::new(mock_stream(&[b"--bound"]), BOUNDARY);
         pin_mut!(finder);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Err(StringError(
                 "unable to verify multipart boundary; expected: \"--boundary\" found: \"--bound\""
                     .into()
@@ -596,101 +595,73 @@ mod test {
 
     #[test]
     fn test_one_empty_field() {
-        let _ = ::env_logger::init();
+        let _ = ::env_logger::try_init();
         let finder = BoundaryFinder::new(
-            mock_stream!(b"--boundary", b"\r\n", b"\r\n", b"--boundary--"),
+            mock_stream(&[b"--boundary", b"\r\n", b"\r\n", b"--boundary--"]),
             BOUNDARY,
         );
         pin_mut!(finder);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(true)
         );
-        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(|cx| finder.as_mut().body_chunk(cx), None);
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(false)
         );
     }
 
     #[test]
     fn test_one_nonempty_field() {
-        let _ = ::env_logger::init();
+        let _ = ::env_logger::try_init();
         let finder = BoundaryFinder::new(
-            mock_stream!(b"--boundary\r\n", b"field data", b"\r\n--boundary--"),
+            mock_stream(&[b"--boundary", b"\r\n", b"field data", b"\r\n", b"--boundary--"]),
             BOUNDARY,
         );
         pin_mut!(finder);
 
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(true)
         );
-        assert_eq!(
-            block_on(|cx| finder.as_mut().body_chunk(cx)),
+        ready_assert_eq!(
+            |cx| finder.as_mut().body_chunk(cx),
             Some(Ok(&b"field data"[..]))
         );
-        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
-            Ok(false)
-        );
-    }
-
-    #[test]
-    fn one_split_field() {
-        let _ = ::env_logger::init();
-        let finder = BoundaryFinder::new(
-            mock_stream!(b"--boundary\r\n", b"field", b"data", b"\r\n--boundary--"),
-            BOUNDARY,
-        );
-        pin_mut!(finder);
-
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
-            Ok(true)
-        );
-        assert_eq!(
-            block_on(|cx| finder.as_mut().body_chunk(cx)),
-            Some(Ok(&b"field"[..]))
-        );
-        assert_eq!(
-            block_on(|cx| finder.as_mut().body_chunk(cx)),
-            Some(Ok(&b"data"[..]))
-        );
-        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(|cx| finder.as_mut().body_chunk(cx), None);
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(false)
         );
     }
 
     #[test]
     fn test_two_empty_fields() {
-        let _ = ::env_logger::init();
+        let _ = ::env_logger::try_init();
         let finder = BoundaryFinder::new(
-            mock_stream!(
+            mock_stream(&[
                 b"--boundary",
                 b"\r\n",
                 b"\r\n--boundary\r\n",
                 b"\r\n",
                 b"--boundary--"
-            ),
+            ]),
             BOUNDARY,
         );
         pin_mut!(finder);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(true)
         );
-        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(|cx| finder.as_mut().body_chunk(cx), None);
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(true)
         );
-        assert_eq!(block_on(|cx| finder.as_mut().body_chunk(cx)), None);
-        assert_eq!(
-            block_on(|cx| finder.as_mut().consume_boundary(cx)),
+        ready_assert_eq!(|cx| finder.as_mut().body_chunk(cx), None);
+        ready_assert_eq!(
+            |cx| finder.as_mut().consume_boundary(cx),
             Ok(false)
         );
     }
