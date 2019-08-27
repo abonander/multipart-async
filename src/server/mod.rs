@@ -209,6 +209,43 @@ pub trait RequestExt: Sized {
     fn into_multipart(self) -> Result<Self::Multipart, Self>;
 }
 
+/// Struct wrapping a stream which allows a chunk to be pushed back to it to be yielded next.
+struct PushChunk<S: TryStream> {
+    stream: S,
+    pushed: Option<S::Ok>,
+}
+
+impl<S: TryStream> PushChunk<S> {
+    unsafe_pinned!(stream: S);
+    unsafe_unpinned!(pushed: Option<S::Ok>);
+}
+
+impl<S: TryStream> PushChunk<S> where S::Ok: BodyChunk {
+    fn push_chunk(self: Pin<&mut Self>, chunk: S::Ok) {
+        if let Some(pushed) = self.as_mut().pushed() {
+            error!(
+                "pushing excess chunk: \"{}\" already pushed chunk: \"{}\"",
+                show_bytes(chunk.as_slice()),
+                show_bytes(pushed.as_slice())
+            );
+        }
+
+        *self.as_mut().pushed() = Some(chunk);
+    }
+}
+
+impl<S: TryStream> Stream for PushChunk<S> {
+    type Item = Result<S::Ok, S::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        if let Some(pushed) = self.as_mut().pushed().take() {
+            return Poll::Ready(Some(Ok(pushed)));
+        }
+
+        self.stream().try_poll_next(cx)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::Multipart;

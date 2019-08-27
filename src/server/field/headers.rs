@@ -1,21 +1,16 @@
-use futures::Stream;
-
-use http::header::{HeaderMap, HeaderName, HeaderValue};
-
-use mime::{self, Mime, Name};
-
 use std::ascii::AsciiExt;
+use std::pin::Pin;
 use std::str;
 
-use crate::server::boundary::BoundaryFinder;
+use futures::Stream;
+use futures::task::Context;
+use http::header::{HeaderMap, HeaderName, HeaderValue};
+use httparse::{EMPTY_HEADER, Status};
+use mime::{self, Mime, Name};
 
 use crate::{BodyChunk, StreamError};
-
-use httparse::{Status, EMPTY_HEADER};
-
 use crate::helpers::*;
-use futures::task::Context;
-use std::pin::Pin;
+use crate::server::PushChunk;
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -86,7 +81,7 @@ impl ReadHeaders {
 
     pub fn read_headers<S: TryStream>(
         &mut self,
-        mut stream: Pin<&mut BoundaryFinder<S>>,
+        mut stream: Pin<&mut PushChunk<S>>,
         cx: &mut Context,
     ) -> PollOpt<FieldHeaders, S::Error>
     where

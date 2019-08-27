@@ -11,6 +11,7 @@ use futures::{Poll, Stream};
 use std::{fmt, mem};
 
 use crate::{BodyChunk, StreamError};
+use super::PushChunk;
 
 use self::State::*;
 use futures::Poll::*;
@@ -26,7 +27,6 @@ pub struct BoundaryFinder<S: TryStream> {
     stream: S,
     state: State<S::Ok>,
     boundary: Box<[u8]>,
-    chunk: Option<S::Ok>,
 }
 
 impl<S: TryStream> BoundaryFinder<S> {
@@ -35,7 +35,6 @@ impl<S: TryStream> BoundaryFinder<S> {
             stream,
             state: State::Watching,
             boundary: boundary.into().into_boxed_slice(),
-            chunk: Default::default(),
         }
     }
 }
@@ -54,22 +53,6 @@ where
 {
     unsafe_pinned!(stream: S);
     unsafe_unpinned!(state: State<S::Ok>);
-    unsafe_unpinned!(chunk: Option<S::Ok>);
-
-    pub fn push_chunk(self: Pin<&mut Self>, chunk: S::Ok) {
-        debug_assert!(
-            twoway::find_bytes(chunk.as_slice(), &self.boundary).is_none(),
-            "Pushed chunk contains boundary: {}",
-            show_bytes(chunk.as_slice())
-        );
-
-        if chunk.is_empty() {
-            debug!("BoundaryFinder::push_chunk() called with empty chunk");
-            return;
-        }
-
-        *self.chunk() = Some(chunk);
-    }
 
     pub fn body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
         macro_rules! try_ready_opt(
@@ -104,10 +87,6 @@ where
                 self.state,
                 self.chunk.as_ref().map(BodyChunk::as_slice)
             );
-
-            if let Some(pushed) = self.as_mut().chunk().take() {
-                return ready_ok(pushed);
-            }
 
             match self.state {
                 Boundary(_) | BoundarySplit(_, _) | End => return Ready(None),
