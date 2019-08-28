@@ -11,6 +11,7 @@ use mime::{self, Mime, Name};
 use crate::{BodyChunk, StreamError};
 use crate::helpers::*;
 use crate::server::PushChunk;
+use crate::test_util::mock_stream;
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -70,7 +71,7 @@ impl FieldHeaders {
 }
 
 #[derive(Debug, Default)]
-pub struct ReadHeaders {
+pub(crate) struct ReadHeaders {
     accumulator: Vec<u8>,
 }
 
@@ -81,7 +82,7 @@ impl ReadHeaders {
 
     pub fn read_headers<S: TryStream>(
         &mut self,
-        mut stream: Pin<&mut PushChunk<S>>,
+        mut stream: Pin<&mut PushChunk<S, S::Ok>>,
         cx: &mut Context,
     ) -> PollOpt<FieldHeaders, S::Error>
     where
@@ -127,7 +128,10 @@ impl ReadHeaders {
                 let (head, tail) = chunk.split_at(split_idx);
                 self.accumulator.extend_from_slice(head.as_slice());
                 stream.as_mut().push_chunk(tail);
-                continue;
+                let headers = parse_headers(&self.accumulator)?;
+                self.accumulator.clear();
+
+                return ready_ok(headers);
             }
 
             if self.accumulator.len().saturating_add(chunk.len()) > MAX_BUF_LEN {
@@ -576,4 +580,23 @@ fn test_parse_headers_errors() {
         .unwrap_err(),
         "duplicate `Content-Disposition` header on field: field"
     );
+}
+
+#[test]
+fn test_read_headers() {
+    let stream = PushChunk::new(mock_stream(&[
+        b"Content-Disposition", b": ", b"form-data;", b" name = ", b"foo", b"\r\n", b"\r\n"
+    ]));
+    pin_mut!(stream);
+
+    let mut read_headers = ReadHeaders::default();
+
+    let headers: FieldHeaders = until_ready!(|cx| read_headers.read_headers(stream.as_mut(), cx))
+        .unwrap().unwrap();
+
+    assert_eq!(headers.name, "foo");
+    assert_eq!(headers.content_type, None);
+    assert_eq!(headers.filename, None);
+    assert_eq!(headers.ext_headers, HeaderMap::new());
+    assert!(read_headers.accumulator.is_empty());
 }

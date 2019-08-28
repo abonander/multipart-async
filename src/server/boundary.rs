@@ -83,9 +83,8 @@ where
 
         loop {
             trace!(
-                "body_chunk() loop state: {:?} pushed_chunk: {:?}",
+                "body_chunk() loop state: {:?}",
                 self.state,
-                self.chunk.as_ref().map(BodyChunk::as_slice)
             );
 
             match self.state {
@@ -293,9 +292,8 @@ where
         }
 
         trace!(
-            "consume_boundary() after-loop state: {:?} pushed_chunk: {:?}",
+            "consume_boundary() after-loop state: {:?}",
             self.state,
-            self.chunk.as_ref().map(BodyChunk::as_slice)
         );
 
         match mem::replace(self.as_mut().state(), Watching) {
@@ -427,7 +425,6 @@ where
             .field("stream", &self.stream)
             .field("state", &self.state)
             .field("boundary", &self.boundary)
-            .field("pushed", &self.chunk)
             .finish()
     }
 }

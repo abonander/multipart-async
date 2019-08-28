@@ -10,10 +10,11 @@ use crate::test_util::BOUNDARY;
 
 use std::cmp;
 
-pub use crate::server::fuzzing::*;
+use crate::server::fuzzing::*;
 
 pub use crate::StringError;
 use crate::helpers::show_bytes;
+use crate::server::PushChunk;
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
 pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
@@ -114,7 +115,7 @@ pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
 pub fn fuzz_read_headers(fuzz_data: &[u8]) {
     if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() { return }
 
-    let finder = BoundaryFinder::new(chunk_fuzz_data(fuzz_data), BOUNDARY);
+    let finder = PushChunk::new(BoundaryFinder::new(chunk_fuzz_data(fuzz_data), BOUNDARY));
     pin_mut!(finder);
 
     let ref mut cx = noop_context();

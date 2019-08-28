@@ -19,15 +19,16 @@ use crate::{BodyChunk, StreamError};
 mod headers;
 
 pub use self::headers::FieldHeaders;
-pub use self::headers::ReadHeaders;
+pub(crate) use self::headers::ReadHeaders;
 
 //pub use self::collect::{ReadTextField, TextField};
 use futures::task::Context;
 use std::pin::Pin;
+use crate::server::PushChunk;
 
 pub(super) fn new_field<S: TryStream>(
     headers: FieldHeaders,
-    stream: Pin<&mut BoundaryFinder<S>>,
+    stream: Pin<&mut PushChunk<BoundaryFinder<S>, S::Ok>>,
 ) -> Field<S> {
     let headers = Rc::new(headers);
 
@@ -74,11 +75,11 @@ impl<S: TryStream> fmt::Debug for Field<'_, S> {
 /// It may be read to completion via the `Stream` impl, or collected to a string with `read_text()`.
 pub struct FieldData<'a, S: TryStream + 'a> {
     headers: Rc<FieldHeaders>,
-    stream: Pin<&'a mut BoundaryFinder<S>>,
+    stream: Pin<&'a mut PushChunk<BoundaryFinder<S>, S::Ok>>,
 }
 
 impl<'a, S: TryStream + 'a> FieldData<'a, S> {
-    unsafe_unpinned!(stream: Pin<&'a mut BoundaryFinder<S>>);
+    unsafe_unpinned!(stream: Pin<&'a mut PushChunk<BoundaryFinder<S>, S::Ok>>);
 }
 
 impl<S: TryStream> Stream for FieldData<'_, S>
@@ -89,6 +90,6 @@ where
     type Item = Result<S::Ok, S::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.stream().as_mut().body_chunk(cx)
+        self.stream().as_mut().poll_next(cx)
     }
 }

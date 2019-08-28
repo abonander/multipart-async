@@ -64,13 +64,13 @@ use std::pin::Pin;
 
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fuzzing {
-    pub use super::boundary::BoundaryFinder;
-    pub use super::field::ReadHeaders;
+    pub(crate) use super::boundary::BoundaryFinder;
+    pub(crate) use super::field::ReadHeaders;
 }
 
 /// The server-side implementation of `multipart/form-data` requests.
 pub struct Multipart<S: TryStream> {
-    inner: BoundaryFinder<S>,
+    inner: PushChunk<BoundaryFinder<S>, S::Ok>,
     read_hdr: ReadHeaders,
     consumed: bool,
 }
@@ -84,7 +84,7 @@ where
     S::Ok: BodyChunk,
     S::Error: StreamError,
 {
-    unsafe_pinned!(inner: BoundaryFinder<S>);
+    unsafe_pinned!(inner: PushChunk<BoundaryFinder<S>, S::Ok>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
     unsafe_unpinned!(consumed: bool);
 
@@ -99,7 +99,7 @@ where
         debug!("Boundary: {}", boundary);
 
         Multipart {
-            inner: BoundaryFinder::new(stream, boundary),
+            inner: PushChunk::new(BoundaryFinder::new(stream, boundary)),
             read_hdr: ReadHeaders::default(),
             consumed: false,
         }
@@ -109,7 +109,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> PollOpt<FieldHeaders, S::Error> {
-        if !ready!(self.as_mut().inner().consume_boundary(cx)?) {
+        if !ready!(self.as_mut().inner().stream().consume_boundary(cx)?) {
             return Poll::Ready(None);
         }
 
@@ -122,7 +122,7 @@ where
 
     pub fn poll_body_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
         if !self.read_hdr.is_reading_headers() {
-            self.inner().body_chunk(cx)
+            self.inner().poll_next(cx)
         } else {
             Poll::Ready(None)
         }
@@ -210,18 +210,25 @@ pub trait RequestExt: Sized {
 }
 
 /// Struct wrapping a stream which allows a chunk to be pushed back to it to be yielded next.
-struct PushChunk<S: TryStream> {
+pub(crate) struct PushChunk<S, T> {
     stream: S,
-    pushed: Option<S::Ok>,
+    pushed: Option<T>,
 }
 
-impl<S: TryStream> PushChunk<S> {
+impl<S, T> PushChunk<S, T> {
     unsafe_pinned!(stream: S);
-    unsafe_unpinned!(pushed: Option<S::Ok>);
+    unsafe_unpinned!(pushed: Option<T>);
+
+    pub(crate) fn new(stream: S) -> Self {
+        PushChunk {
+            stream,
+            pushed: None,
+        }
+    }
 }
 
-impl<S: TryStream> PushChunk<S> where S::Ok: BodyChunk {
-    fn push_chunk(self: Pin<&mut Self>, chunk: S::Ok) {
+impl<S: TryStream> PushChunk<S, S::Ok> where S::Ok: BodyChunk {
+    fn push_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) {
         if let Some(pushed) = self.as_mut().pushed() {
             error!(
                 "pushing excess chunk: \"{}\" already pushed chunk: \"{}\"",
@@ -234,10 +241,10 @@ impl<S: TryStream> PushChunk<S> where S::Ok: BodyChunk {
     }
 }
 
-impl<S: TryStream> Stream for PushChunk<S> {
+impl<S: TryStream> Stream for PushChunk<S, S::Ok> {
     type Item = Result<S::Ok, S::Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if let Some(pushed) = self.as_mut().pushed().take() {
             return Poll::Ready(Some(Ok(pushed)));
         }
