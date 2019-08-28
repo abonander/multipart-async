@@ -48,7 +48,7 @@ use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops};
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 #[macro_use]
 mod test_util;
 

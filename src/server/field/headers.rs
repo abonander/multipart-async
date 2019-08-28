@@ -11,7 +11,6 @@ use mime::{self, Mime, Name};
 use crate::{BodyChunk, StreamError};
 use crate::helpers::*;
 use crate::server::PushChunk;
-use crate::test_util::mock_stream;
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -584,6 +583,7 @@ fn test_parse_headers_errors() {
 
 #[test]
 fn test_read_headers() {
+    use crate::test_util::mock_stream;
     let stream = PushChunk::new(mock_stream(&[
         b"Content-Disposition", b": ", b"form-data;", b" name = ", b"foo", b"\r\n", b"\r\n"
     ]));
