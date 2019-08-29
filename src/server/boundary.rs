@@ -46,16 +46,16 @@ macro_rules! set_state {
 }
 
 impl<S> BoundaryFinder<S>
-where
-    S: TryStream,
-    S::Ok: BodyChunk,
-    S::Error: StreamError,
+    where
+        S: TryStream,
+        S::Ok: BodyChunk,
+        S::Error: StreamError,
 {
     unsafe_pinned!(stream: S);
     unsafe_unpinned!(state: State<S::Ok>);
 
     pub fn body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
-        macro_rules! try_ready_opt(
+        macro_rules! try_ready_opt (
             ($try:expr) => (
                 match $try {
                     Poll::Ready(Some(Ok(val))) => val,
@@ -88,7 +88,7 @@ where
             );
 
             match self.state {
-                Boundary(_) | BoundarySplit(_, _) | End => return Ready(None),
+                Found(_) | Split(_, _) | End => return Ready(None),
                 _ => (),
             }
 
@@ -120,7 +120,7 @@ where
                                 show_bytes(&self.boundary),
                                 show_bytes(partial.as_slice())
                             ));
-                        },
+                        }
                         Pending => {
                             set_state!(self = Partial(partial, res));
                             return Pending;
@@ -130,7 +130,7 @@ where
                     trace!("Partial got second chunk: {}", show_bytes(chunk.as_slice()));
 
                     if !self.is_boundary_prefix(partial.as_slice(), chunk.as_slice(), res) {
-                        // partial + chunk don't make a boundary prefix, return the partial
+                        trace!("partial + chunk don't make a boundary prefix");
                         set_state!(self = Remainder(chunk));
                         return ready_ok(partial);
                     }
@@ -139,37 +139,52 @@ where
                         (self.boundary_size(res.incl_crlf)).saturating_sub(partial.len());
 
                     if needed_len > chunk.len() {
-                        // hopefully rare
+                        // hopefully rare; must be dealing with a poorly behaved stream impl
                         return ready_err(
                             format!("needed {} more bytes to verify boundary, got {}",
-                                       needed_len, chunk.len())
+                                    needed_len, chunk.len())
                         );
                     }
 
-                    if self.check_boundary_split(
-                        &partial.as_slice()[res.boundary_start()..],
+                    let bnd_start = res.boundary_start();
+
+                    let is_boundary = (bnd_start > partial.len()
+                        // `partial` ended with a `<CR>` and `chunk` starts with `<LF>--<boundary>`
+                        && self.check_boundary(&chunk.as_slice()[bnd_start - partial.len()..]))
+                        || self.check_boundary_split(
+                        &partial.as_slice()[bnd_start..],
                         chunk.as_slice(),
-                    ) {
-                        let (mut ret, first) = partial.split_at(res.boundary_start());
+                    );
 
-                        if ret.len() >= 2 && res.incl_crlf {
-                            let ret_len = ret.len();
-                            // trim the preceeding CRLF
-                            ret = ret.split_at(ret_len - 2).0;
-                        }
-
-                        *self.as_mut().state() = BoundarySplit(first, chunk);
-
-                        if !ret.is_empty() {
-                            return ready_ok(ret);
-                        } else {
-                            // Don't return an empty chunk at the end
-                            return Ready(None);
-                        }
+                    if !is_boundary {
+                        trace!("partial + chunk don't make a whole boundary");
+                        *self.as_mut().state() = Remainder(chunk);
+                        return ready_ok(partial);
                     }
 
-                    *self.as_mut().state() = Remainder(chunk);
-                    return ready_ok(partial);
+                    let ret = if res.incl_crlf {
+                        if partial.len() < bnd_start {
+                            // `partial` ended with a `<CR>` and `chunk` starts with `<LF>--<boundary>`
+                            *self.as_mut().state() = Found(chunk.split_at(bnd_start - partial.len()).1);
+                            partial.split_at(res.idx).0
+                        } else {
+                            let (ret, rem) = partial.split_at(res.idx);
+                            let (_, first) = rem.split_at(2);
+                            *self.as_mut().state() = Split(first, chunk);
+                            ret
+                        }
+                    } else {
+                        let (ret, first) = partial.split_at(res.idx);
+                        *self.as_mut().state() = Split(first, chunk);
+                        ret
+                    };
+
+                    if !ret.is_empty() {
+                        return ready_ok(ret);
+                    } else {
+                        // Don't return an empty chunk at the end
+                        return Ready(None);
+                    }
                 }
                 state => unreachable!("invalid state: {:?}", state),
             }
@@ -203,7 +218,7 @@ where
                     bnd
                 };
 
-                set_state!(self = Boundary(bnd));
+                set_state!(self = Found(bnd));
 
                 trace!(
                     "boundary located: {:?} returning chunk: {}",
@@ -248,7 +263,7 @@ where
             .or_else(||
                 // EDGE CASE: the bytes of the newline before the boundary are at the end
                 // of the chunk
-                if len >= 2 && &chunk[len - 2 ..] == &*b"\r\n" {
+                if len >= 2 && &chunk[len - 2..] == &*b"\r\n" {
                     Some(SearchResult {
                         idx: len - 2,
                         incl_crlf: true,
@@ -256,7 +271,7 @@ where
                 } else if len >= 1 && chunk[len - 1] == b'\r' {
                     Some(SearchResult {
                         idx: len - 1,
-                        incl_crlf: true
+                        incl_crlf: true,
                     })
                 } else {
                     None
@@ -274,9 +289,10 @@ where
 
         second.len() >= check_len
             && first
-                .iter()
-                .chain(&second[..check_len])
-                .eq(self.boundary.iter())
+            .iter()
+            .chain(&second[..check_len])
+            .zip(self.boundary.iter())
+            .all(|(l, r)| l == r)
     }
 
     /// Returns `true` if another field should follow this boundary, `false` if the stream
@@ -297,8 +313,8 @@ where
         );
 
         match mem::replace(self.as_mut().state(), Watching) {
-            Boundary(bnd) => self.confirm_boundary(bnd),
-            BoundarySplit(first, second) => self.confirm_boundary_split(first, second),
+            Found(bnd) => self.confirm_boundary(bnd),
+            Split(first, second) => self.confirm_boundary_split(first, second),
             End => {
                 *self.state() = End;
                 ready_ok(false)
@@ -404,10 +420,10 @@ where
 }
 
 impl<S> Stream for BoundaryFinder<S>
-where
-    S: TryStream,
-    S::Ok: BodyChunk,
-    S::Error: StreamError,
+    where
+        S: TryStream,
+        S::Ok: BodyChunk,
+        S::Error: StreamError,
 {
     type Item = Result<S::Ok, S::Error>;
 
@@ -417,8 +433,8 @@ where
 }
 
 impl<S: TryStream + fmt::Debug> fmt::Debug for BoundaryFinder<S>
-where
-    S::Ok: BodyChunk + fmt::Debug,
+    where
+        S::Ok: BodyChunk + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("BoundaryFinder")
@@ -434,8 +450,8 @@ enum State<B> {
     Watching,
     /// Partial boundary
     Partial(B, SearchResult),
-    Boundary(B),
-    BoundarySplit(B, B),
+    Found(B),
+    Split(B, B),
     /// The remains of a chunk after processing
     Remainder(B),
     End,
@@ -453,10 +469,10 @@ impl<B: BodyChunk> fmt::Debug for State<B> {
                 show_bytes(bnd.as_slice()),
                 res
             ),
-            Boundary(ref bnd) => write!(f, "State::Boundary({})", show_bytes(bnd.as_slice())),
-            BoundarySplit(ref first, ref second) => write!(
+            Found(ref bnd) => write!(f, "State::Found({})", show_bytes(bnd.as_slice())),
+            Split(ref first, ref second) => write!(
                 f,
-                "State::BoundarySplit(\"{}\", \"{}\")",
+                "State::Split(\"{}\", \"{}\")",
                 show_bytes(first.as_slice()),
                 show_bytes(second.as_slice())
             ),
