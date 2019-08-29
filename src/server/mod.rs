@@ -135,69 +135,6 @@ where
             Poll::Ready(None)
         }
     }
-
-    pub fn fold_fields<F, Fut>(self, init: Fut::Ok, folder: F) -> FoldFields<F, S, Fut>
-    where
-        F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut,
-        Fut: TryFuture<Error = S::Error>,
-    {
-        FoldFields {
-            folder,
-            multipart: self,
-            state: Some(init),
-            fut: None,
-        }
-    }
-}
-
-pub struct FoldFields<F, S: TryStream, Fut: TryFuture> {
-    folder: F,
-    multipart: Multipart<S>,
-    state: Option<Fut::Ok>,
-    fut: Option<Fut>,
-}
-
-impl<F, S: TryStream, Fut: TryFuture> FoldFields<F, S, Fut> {
-    unsafe_pinned!(multipart: Multipart<S>);
-    unsafe_pinned!(fut: Option<Fut>);
-    unsafe_unpinned!(state: Option<Fut::Ok>);
-    unsafe_unpinned!(folder: F);
-}
-
-impl<F, S, Fut> Future for FoldFields<F, S, Fut>
-where
-    F: for<'a> FnMut(Field<'a, S>, Fut::Ok) -> Fut,
-    Fut: TryFuture<Error = S::Error>,
-    S: TryStream,
-    S::Ok: BodyChunk,
-    S::Error: StreamError,
-{
-    type Output = Result<Fut::Ok, S::Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        loop {
-            if let Some(fut) = self.as_mut().fut().as_pin_mut() {
-                *self.as_mut().state() = Some(ready!(fut.try_poll(cx)?));
-            }
-
-            let state = self
-                .as_mut()
-                .state()
-                .take()
-                .expect(".poll() called after value returned");
-
-            unsafe {
-                let this = self.as_mut().get_unchecked_mut();
-                if let Some(field) = ready!(Pin::new_unchecked(&mut this.multipart).poll_field(cx)?)
-                {
-                    let next_state = (this.folder)(field, state);
-                    Pin::new_unchecked(&mut this.fut).set(Some(next_state));
-                } else {
-                    return ready_ok(state);
-                }
-            }
-        }
-    }
 }
 
 /// An extension trait for requests which may be multipart.
@@ -255,6 +192,7 @@ impl<S: TryStream> Stream for PushChunk<S, S::Ok> {
 
 #[cfg(test)]
 mod test {
+    use futures::prelude::*;
     use super::Multipart;
     use crate::test_util::mock_stream;
     use crate::server::FieldHeaders;
@@ -310,6 +248,5 @@ mod test {
                 _backcompat: (),
             }))
         );
-
     }
 }
