@@ -112,7 +112,10 @@ impl ReadHeaders {
             if let Some(header_end) = twoway::find_bytes(chunk.as_slice(), b"\r\n\r\n") {
                 // Split after the double-CRLF because we don't want to yield it and httparse expects it
                 let (headers, rem) = chunk.split_at(header_end + 4);
-                stream.as_mut().push_chunk(rem);
+
+                if !rem.is_empty() {
+                    stream.as_mut().push_chunk(rem);
+                }
 
                 if !self.accumulator.is_empty() {
                     self.accumulator.extend_from_slice(headers.as_slice());
@@ -126,7 +129,11 @@ impl ReadHeaders {
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
                 self.accumulator.extend_from_slice(head.as_slice());
-                stream.as_mut().push_chunk(tail);
+
+                if !tail.is_empty() {
+                    stream.as_mut().push_chunk(tail);
+                }
+
                 let headers = parse_headers(&self.accumulator)?;
                 self.accumulator.clear();
 

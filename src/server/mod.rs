@@ -45,6 +45,16 @@ macro_rules! fmt_err(
     );
 );
 
+macro_rules! debug_panic(
+    ($($args:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!($($args)*)
+        } else {
+            warn!($($args)*)
+        }
+    }
+);
+
 mod boundary;
 mod field;
 
@@ -105,14 +115,17 @@ where
         }
     }
 
-    pub fn poll_next_field_headers(
+    pub fn poll_has_next_field(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<bool, S::Error>> {
+        self.as_mut().inner().stream().consume_boundary(cx)
+    }
+
+    pub fn poll_field_headers(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> PollOpt<FieldHeaders, S::Error> {
-        if !ready!(self.as_mut().inner().stream().consume_boundary(cx)?) {
-            return Poll::Ready(None);
-        }
-
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
             this.read_hdr
@@ -123,14 +136,6 @@ where
     pub fn poll_body_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
         if !self.read_hdr.is_reading_headers() {
             self.inner().poll_next(cx)
-        } else {
-            Poll::Ready(None)
-        }
-    }
-
-    pub fn poll_field(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<Field<S>, S::Error> {
-        if let Some(headers) = ready!(self.as_mut().poll_next_field_headers(cx)?) {
-            ready_ok(field::new_field(headers, self.inner()))
         } else {
             Poll::Ready(None)
         }
@@ -167,12 +172,14 @@ impl<S, T> PushChunk<S, T> {
 impl<S: TryStream> PushChunk<S, S::Ok> where S::Ok: BodyChunk {
     fn push_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) {
         if let Some(pushed) = self.as_mut().pushed() {
-            error!(
+            debug_panic!(
                 "pushing excess chunk: \"{}\" already pushed chunk: \"{}\"",
                 show_bytes(chunk.as_slice()),
                 show_bytes(pushed.as_slice())
             );
         }
+
+        debug_assert!(!chunk.is_empty(), "pushing empty chunk");
 
         *self.as_mut().pushed() = Some(chunk);
     }
@@ -207,7 +214,7 @@ mod test {
             BOUNDARY
         );
         pin_mut!(multipart);
-        ready_assert_eq!(|cx| multipart.as_mut().poll_next_field_headers(cx), None);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
 
     #[test]
@@ -218,7 +225,7 @@ mod test {
             BOUNDARY
         );
         pin_mut!(multipart);
-        ready_assert_eq!(|cx| multipart.as_mut().poll_next_field_headers(cx), None);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
 
     #[test]
@@ -238,8 +245,10 @@ mod test {
         );
         pin_mut!(multipart);
 
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(true));
+
         ready_assert_eq!(
-            |cx| multipart.as_mut().poll_next_field_headers(cx),
+            |cx| multipart.as_mut().poll_field_headers(cx),
             Some(Ok(FieldHeaders {
                 name: "foo".into(),
                 filename: None,
@@ -248,5 +257,12 @@ mod test {
                 _backcompat: (),
             }))
         );
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_body_chunk(cx),
+            Some(Ok(&b"field data"[..]))
+        );
+
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
 }
