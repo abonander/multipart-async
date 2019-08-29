@@ -15,4 +15,4 @@ esac
 
 cd fuzz
 env RUSTFLAGS='-C opt-level=0' cargo afl build || exit 1
-cargo afl fuzz -i $DICT -o output target/debug/$1
+cargo afl fuzz -i $DICT -o "output-$1" target/debug/$1

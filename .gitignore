@@ -18,4 +18,4 @@
 *.iml
 
 fuzz/target
-fuzz/output
+fuzz/output*
