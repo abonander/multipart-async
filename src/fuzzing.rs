@@ -14,7 +14,7 @@ use crate::server::fuzzing::*;
 
 pub use crate::StringError;
 use crate::helpers::show_bytes;
-use crate::server::PushChunk;
+use crate::server::{PushChunk, Multipart};
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
 pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
@@ -22,6 +22,17 @@ pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8]
     stream::iter(data.chunks(BOUNDARY.len() - 1))
         .map(Ok)
         .interleave_pending()
+}
+
+pub fn fuzz_whole_request(fuzz_data: &[u8]) {
+    let multipart = Multipart::with_body(chunk_fuzz_data(fuzz_data), BOUNDARY);
+    pin_mut!(multipart);
+
+    while let Ok(true) = until_ready!(|cx| multipart.as_mut().poll_has_next_field(cx)) {
+        if let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
+            while let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_body_chunk(cx)) {}
+        }
+    }
 }
 
 pub fn fuzz_boundary_finder(fuzz_data: &[u8]) {

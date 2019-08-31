@@ -1,0 +1,20 @@
+--boundary
+Content-Disposition: form-data; name=text
+
+field data
+--boundary
+Content-Disposition: form-data; name="text-file"
+Content-Type: text/plain; charset=utf_8
+
+field data 2
+hello world
+--boundary
+Content-Disposition: form-data; name="binary-file"
+Content-Type: application/octet-stream
+
+asdfasdfasdf12341234--asdf--asdf--
+
+--asdfasdf
+
+--asdfasdf
+--boundary--
