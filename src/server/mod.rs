@@ -11,15 +11,19 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
-use futures::task::{self, Context};
+use std::pin::Pin;
+
 use futures::{Future, Poll, Stream};
-
-use std::cell::Cell;
-use std::rc::Rc;
-
-use self::boundary::BoundaryFinder;
+use futures::task::{self, Context};
+use http::{Method, Request};
+use mime::Mime;
 
 use crate::{BodyChunk, StreamError};
+use crate::helpers::*;
+
+use self::boundary::BoundaryFinder;
+pub use self::field::{FieldHeaders};
+use self::field::ReadHeaders;
 
 macro_rules! try_opt (
     ($expr:expr) => (
@@ -58,19 +62,10 @@ macro_rules! debug_panic(
 mod boundary;
 mod field;
 
-use crate::helpers::*;
-
-use self::field::ReadHeaders;
-
-pub use self::field::{Field, FieldData, FieldHeaders};
 // pub use self::field::{ReadTextField, TextField};
 
 #[cfg(feature = "hyper")]
 mod hyper;
-
-#[cfg(feature = "hyper")]
-pub use self::hyper::{MinusBody, MultipartService};
-use std::pin::Pin;
 
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fuzzing {
@@ -79,6 +74,30 @@ pub(crate) mod fuzzing {
 }
 
 /// The server-side implementation of `multipart/form-data` requests.
+///
+/// ### Low-Level Flow
+/// For an initial release, a basic low-level API is provided which is expected to be supplemented
+/// or replaced later once more design work has taken place.
+///
+/// The flow is expected to work as follows, assuming any `Poll::Pending` and
+/// `Ready(Err(_))`/`Ready(Some(Err(_)))` results are handled in the typical fashion:
+///
+/// 1. Use the [`try_from_request()`](#method.try_from_request) constructor to check if the request
+/// is a `multipart/form-data` request and if so, proceed to the next step, otherwise process it
+/// normally.
+///
+/// 2. Poll for the first field boundary with [`.poll_has_next_field()`](#method.poll_has_next_field);
+/// if it returns `true` proceed to the next step, if `false` the request is at an end.
+///
+/// 3. Poll for the field's headers containing its name, content-type and other info with
+/// [`.poll_field_headers()`](#method.poll_field_headers).
+///
+/// 4. Poll for the field's data chunks with [`.poll_field_chunk()](#method.poll_field_chunk)
+/// until `None` is returned, then loop back to step 2.
+///
+/// Any data past before the first boundary and past the end of the terminating boundary is ignored
+/// as it is out-of-spec and should not be expected to be left in the underlying stream intact.
+/// Please open an issue if you have a legitimate use-case for extraneous data in a multipart request.
 pub struct Multipart<S: TryStream> {
     inner: PushChunk<BoundaryFinder<S>, S::Ok>,
     read_hdr: ReadHeaders,
@@ -100,7 +119,8 @@ where
 
     /// Construct a new `Multipart` with the given body reader and boundary.
     ///
-    /// This will add the requisite `--` and CRLF (`\r\n`) to the boundary as per
+    /// The boundary should be taken directly from the `Content-Type: multipart/form-data` header
+    /// of the request. This will add the requisite `--` to the boundary as per
     /// [IETF RFC 7578 section 4.1](https://tools.ietf.org/html/rfc7578#section-4.1).
     pub fn with_body<B: Into<String>>(stream: S, boundary: B) -> Self {
         let mut boundary = boundary.into();
@@ -115,6 +135,40 @@ where
         }
     }
 
+    /// If `req` is a `POST multipart/form-data` request, take the body and
+    /// return the wrapped stream. Else, return the request.
+    pub fn try_from_request(req: Request<S>) -> Result<Self, Request<S>> {
+        fn get_boundary(parts: &http::request::Parts) -> Option<String> {
+            Some(
+                parts.headers.get(http::header::CONTENT_TYPE)?
+                    .to_str().ok()?
+                    .parse::<Mime>().ok()?
+                    .get_param(mime::BOUNDARY)?
+                    .to_string()
+            )
+        }
+
+        if req.method() != &Method::POST {
+            return Err(req);
+        }
+
+        let (parts, body) = req.into_parts();
+
+        if let Some(boundary) = get_boundary(&parts) {
+            return Ok(Self::with_body(body, boundary))
+        }
+
+        Err(Request::from_parts(parts, body))
+    }
+
+    /// Poll for the next boundary, returning `true` if a field should follow that boundary,
+    /// or `false` if the request is at an end. See the module-level docs for usage.
+    ///
+    /// If this returns `Ready(Ok(true))`, you may then begin
+    /// [polling for the headers of the next field](#method.poll_field_headers).
+    ///
+    /// This is a low-level call and is expected to be supplemented/replaced by a more ergonomic
+    /// API once more design work has taken place.
     pub fn poll_has_next_field(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
@@ -122,10 +176,31 @@ where
         self.as_mut().inner().stream().consume_boundary(cx)
     }
 
+    /// Poll for the headers of the next field, returning the headers or an error otherwise.
+    ///
+    /// Once you have the field headers, you may then begin
+    /// [polling for field chunks](#method.poll_field_chunk).
+    ///
+    /// In addition to bubbling up errors from the underlying stream, this will also return an
+    /// error if:
+    /// * the headers were corrupted, or:
+    /// * did not contain a `Content-Disposition: form-data` header with a `name` parameter, or:
+    /// * the end of stream was reached before the header segment terminator `\r\n\r\n`, or:
+    /// * the buffer for the headers exceeds a preset size.
+    /// This is a low-level call and is expected to be supplemented/replaced by a more ergonomic
+    /// API once more design work has taken place.
+    ///
+    /// ### Note: Calling This Is Not Enforced
+    /// If this step is skipped then [`.poll_field_chunk()`](#method.poll_field_chunk)
+    /// will return chunks of the header segment which may or may not be desirable depending
+    /// on your use-case.
+    ///
+    /// If you do want to inspect the raw field headers, they are separated by one CRLF (`\r\n`) and
+    /// terminated by two CRLFs (`\r\n\r\n`) after which the field chunks follow.
     pub fn poll_field_headers(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> PollOpt<FieldHeaders, S::Error> {
+    ) -> Poll<Result<FieldHeaders, S::Error>> {
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
             this.read_hdr
@@ -133,22 +208,31 @@ where
         }
     }
 
-    pub fn poll_body_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
+    /// Poll for the next chunk of the current field.
+    ///
+    /// This returns `Ready(Some(Ok(chunk)))` as long as there are chunks in the field,
+    /// yielding `Ready(None)` when the next boundary is reached.
+    ///
+    /// You may then begin the next field with
+    /// [`.poll_has_next_field()`](#method.poll_has_next_field).
+    ///
+    /// This is a low-level call and is expected to be supplemented/replaced by a more ergonomic
+    /// API once more design work has taken place.
+    ///
+    /// ### Note: Call `.poll_field_headers()` First for Correct Data
+    /// If [`.poll_field_headers()`](#method.poll_field_headers) is skipped then this call
+    /// will return chunks of the header segment which may or may not be desirable depending
+    /// on your use-case.
+    ///
+    /// If you do want to inspect the raw field headers, they are separated by one CRLF (`\r\n`) and
+    /// terminated by two CRLFs (`\r\n\r\n`) after which the field chunks follow.
+    pub fn poll_field_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
         if !self.read_hdr.is_reading_headers() {
             self.inner().poll_next(cx)
         } else {
             Poll::Ready(None)
         }
     }
-}
-
-/// An extension trait for requests which may be multipart.
-pub trait RequestExt: Sized {
-    /// The success type, may contain `Multipart` or something else.
-    type Multipart;
-
-    /// Convert `Self` into `Self::Multipart` if applicable.
-    fn into_multipart(self) -> Result<Self::Multipart, Self>;
 }
 
 /// Struct wrapping a stream which allows a chunk to be pushed back to it to be yielded next.
@@ -200,9 +284,11 @@ impl<S: TryStream> Stream for PushChunk<S, S::Ok> {
 #[cfg(test)]
 mod test {
     use futures::prelude::*;
-    use super::Multipart;
-    use crate::test_util::mock_stream;
+
     use crate::server::FieldHeaders;
+    use crate::test_util::mock_stream;
+
+    use super::Multipart;
 
     const BOUNDARY: &str = "boundary";
 

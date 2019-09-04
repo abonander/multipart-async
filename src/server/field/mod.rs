@@ -30,11 +30,10 @@ pub(super) fn new_field<S: TryStream>(
     headers: FieldHeaders,
     stream: Pin<&mut PushChunk<BoundaryFinder<S>, S::Ok>>,
 ) -> Field<S> {
-    let headers = Rc::new(headers);
 
     Field {
-        headers: headers.clone(),
-        data: FieldData { headers, stream },
+        headers,
+        data: FieldData { stream },
         _priv: (),
     }
 }
@@ -55,7 +54,7 @@ pub(super) fn new_field<S: TryStream>(
 /// event loop/reactor/executor implementation, may cause a deadlock.
 pub struct Field<'a, S: TryStream + 'a> {
     /// The headers of this field, including the name, filename, and `Content-Type`, if provided.
-    pub headers: Rc<FieldHeaders>,
+    pub headers: FieldHeaders,
     /// The data of this field in the request, represented as a stream of chunks.
     pub data: FieldData<'a, S>,
     _priv: (),
@@ -74,7 +73,6 @@ impl<S: TryStream> fmt::Debug for Field<'_, S> {
 ///
 /// It may be read to completion via the `Stream` impl, or collected to a string with `read_text()`.
 pub struct FieldData<'a, S: TryStream + 'a> {
-    headers: Rc<FieldHeaders>,
     stream: Pin<&'a mut PushChunk<BoundaryFinder<S>, S::Ok>>,
 }
 

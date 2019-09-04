@@ -83,7 +83,7 @@ impl ReadHeaders {
         &mut self,
         mut stream: Pin<&mut PushChunk<S, S::Ok>>,
         cx: &mut Context,
-    ) -> PollOpt<FieldHeaders, S::Error>
+    ) -> Poll<Result<FieldHeaders, S::Error>>
     where
         S::Ok: BodyChunk,
         S::Error: StreamError,
@@ -96,14 +96,10 @@ impl ReadHeaders {
 
             let chunk = match ready!(stream.as_mut().poll_next(cx)?) {
                 Some(chunk) => chunk,
-                None => {
-                    return if !self.accumulator.is_empty() {
-                        ready_err("unexpected end of stream")
-                    } else {
-                        trace!("end of request reached");
-                        Poll::Ready(None)
-                    }
-                }
+                None => ret_err!(
+                    "unexpected end of stream while reading headers: \"{}\"",
+                    show_bytes(chunk.as_slice())
+                ),
             };
 
             trace!("got chunk for headers: {}", show_bytes(chunk.as_slice()));
@@ -599,7 +595,7 @@ fn test_read_headers() {
     let mut read_headers = ReadHeaders::default();
 
     let headers: FieldHeaders = until_ready!(|cx| read_headers.read_headers(stream.as_mut(), cx))
-        .unwrap().unwrap();
+        .unwrap();
 
     assert_eq!(headers.name, "foo");
     assert_eq!(headers.content_type, None);

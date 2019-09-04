@@ -18,7 +18,6 @@ edition = "2018"
 [dependencies]
 bytes = "0.4.4"
 display_bytes = "0.2.1"
-env_logger = "0.6.2"
 futures-preview = "0.3.0-alpha.18"
 http = "0.1.0"
 log = "0.4"
@@ -28,7 +27,6 @@ rand = "0.3"
 tempdir = "0.3"
 pin-utils = "0.1.0-alpha.4"
 
-hyper = { version = "0.12", optional = true }
 httparse = { version = "1.0", optional = true }
 twoway = { version = "0.2", optional = true }
 
@@ -38,8 +36,6 @@ futures-test-preview = { version = "0.3.0-alpha.18", optional = true }
 client = []
 default = ["server"]
 server = ["twoway", "httparse"]
-# Use `Arc` instead of `Rc` where needed
-use_arc = []
 # Expose APIs used for fuzzing
 # Note: these APIs are not considered part of the public API and may break
 fuzzing = ["futures-test-preview"]
@@ -47,6 +43,7 @@ fuzzing = ["futures-test-preview"]
 [dev-dependencies]
 lazy_static = "1.3.0"
 futures-test-preview = "0.3.0-alpha.18"
+env_logger = "0.6.2"
 
 [[bin]]
 name = "form_test"
