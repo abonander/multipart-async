@@ -11,7 +11,8 @@ use std::str::Utf8Error;
 
 use crate::StreamError;
 
-pub use futures::*;
+pub use futures_core::*;
+use std::task::Poll::{self, *};
 
 pub type PollOpt<T, E> = Poll<Option<Result<T, E>>>;
 

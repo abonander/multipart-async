@@ -1,10 +1,12 @@
 //! ### Note: not stable APIS
 //! The items exported in this module are not considered part of this crate's public API
 //! and may receive breaking changes in semver-compatible versions.
-use futures::{stream, Stream, StreamExt};
-use futures::Poll::*;
+use futures_core::stream::Stream;
 use futures_test::stream::StreamTestExt;
 use futures_test::task::noop_context;
+use futures_util::stream::{self, StreamExt};
+
+use std::task::Poll::*;
 
 use crate::test_util::BOUNDARY;
 
@@ -29,8 +31,8 @@ pub fn fuzz_whole_request(fuzz_data: &[u8]) {
     pin_mut!(multipart);
 
     while let Ok(true) = until_ready!(|cx| multipart.as_mut().poll_has_next_field(cx)) {
-        if let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
-            while let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_body_chunk(cx)) {}
+        if let Ok(_) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
+            while let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_field_chunk(cx)) {}
         }
     }
 }

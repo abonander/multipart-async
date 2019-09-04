@@ -1,5 +1,5 @@
-use futures::{Future, Stream};
-use futures::Poll::*;
+use futures_core::{Future, Stream};
+use futures_core::Poll::*;
 
 use std::rc::Rc;
 use std::{fmt, str};
@@ -10,7 +10,7 @@ use {BodyChunk, StreamError};
 use super::FieldHeaders;
 
 use helpers::*;
-use futures::task::Context;
+use futures_core::task::Context;
 use std::pin::Pin;
 
 enum ChunkStack<C> {

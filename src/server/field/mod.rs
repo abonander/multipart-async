@@ -4,7 +4,8 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use futures::{Poll, Stream, TryStream};
+use futures_core::{Future, Poll, Stream, TryStream};
+use std::task::Poll::*;
 
 use std::rc::Rc;
 use std::str;
@@ -23,23 +24,26 @@ pub use self::headers::FieldHeaders;
 pub(crate) use self::headers::ReadHeaders;
 
 //pub use self::collect::{ReadTextField, TextField};
-use futures::task::Context;
+use futures_core::task::Context;
 use std::pin::Pin;
 use crate::server::PushChunk;
-use futures::future::Ready;
-use futures_test::futures_core_reexport::Future;
 
+/// A `Future` yielding `Option<Result<Field>>`
 pub struct NextField<'a, S: TryStream + 'a> {
     multipart: Option<Pin<&'a mut Multipart<S>>>,
     has_next_field: bool,
 }
 
-impl<'a, S: 'a> NextField<'a, S> {
-    pub(crate) fn new(multipart: Pin<&'a mut Multipart<S>>) {
+impl<'a, S: TryStream + 'a> NextField<'a, S> {
+    pub(crate) fn new(multipart: Pin<&'a mut Multipart<S>>) -> Self {
         NextField {
-            multipart,
+            multipart: Some(multipart),
             has_next_field: false,
         }
+    }
+
+    fn multipart(&mut self) -> Option<Pin<&mut Multipart<S>>> {
+        Some(self.multipart.as_mut()?.as_mut())
     }
 }
 
@@ -47,24 +51,40 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
     type Output = Option<Result<Field<'a, S>, S::Error>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        use PollState::*;
+        // since we can't use `?` with `Option<...>` in this context
+        macro_rules! multipart {
+            (get) => {
+                if let Some(ref mut multipart) = self.multipart {
+                    multipart.as_mut()
+                } else {
+                    return Ready(None);
+                }
+            };
+            (take) => {
+                if let Some(multipart) = self.multipart.take() {
+                    multipart
+                } else {
+                    return Ready(None);
+                }
+            }
+        }
 
         // `false` and `multipart = Some` means we haven't polled for next field yet
         self.has_next_field = self.has_next_field
-            || ready!(self.multipart.as_pin_mut()?.poll_has_next_field(cx)?);
+            || ready!(multipart!(get).poll_has_next_field(cx)?);
 
         if !self.has_next_field {
             // end of stream, next `?` will return
             self.multipart = None;
         }
 
-        Ready(Some(Field {
-            headers: ready!(self.multipart.as_pin_mut()?.poll_field_headers(cx)?),
+        Ready(Some(Ok(Field {
+            headers: ready!(multipart!(get).poll_field_headers(cx)?),
             data: FieldData {
-                multipart: self.multipart.take()?
+                multipart: multipart!(take)
             },
             _priv: ()
-        }))
+        })))
     }
 }
 
@@ -102,7 +122,7 @@ where
 {
     type Item = Result<S::Ok, S::Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.multipart.as_mut().poll_field_chunk(cx)
     }
 }

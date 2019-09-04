@@ -6,7 +6,7 @@
 // copied, modified, or distributed except according to those terms.
 extern crate twoway;
 
-use futures::{Poll, Stream};
+use futures_core::{Poll, Stream};
 
 use std::{fmt, mem};
 
@@ -14,10 +14,10 @@ use crate::{BodyChunk, StreamError};
 use super::PushChunk;
 
 use self::State::*;
-use futures::Poll::*;
+use futures_core::Poll::*;
 
 use crate::helpers::*;
-use futures::task::Context;
+use futures_core::task::Context;
 use std::pin::Pin;
 
 pub type PollOpt<T, E> = Poll<Option<Result<T, E>>>;

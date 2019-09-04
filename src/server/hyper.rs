@@ -8,7 +8,7 @@
 //! Enabled with the `hyper` feature (on by default).
 use bytes::Bytes;
 
-use futures::future::{Either, IntoFuture};
+use futures_core::future::{Either, IntoFuture};
 
 pub use hyper::server::Service;
 pub use hyper::{Body, Chunk, Error, Headers, HttpVersion, Method, Request, Response, Uri};

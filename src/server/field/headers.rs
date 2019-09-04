@@ -1,9 +1,10 @@
 use std::ascii::AsciiExt;
 use std::pin::Pin;
 use std::str;
+use std::task::Poll::{self, *};
 
-use futures::Stream;
-use futures::task::Context;
+use futures_core::Stream;
+use futures_core::task::Context;
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use httparse::{EMPTY_HEADER, Status};
 use mime::{self, Mime, Name};
@@ -98,7 +99,7 @@ impl ReadHeaders {
                 Some(chunk) => chunk,
                 None => ret_err!(
                     "unexpected end of stream while reading headers: \"{}\"",
-                    show_bytes(chunk.as_slice())
+                    show_bytes(self.accumulator.as_slice())
                 ),
             };
 

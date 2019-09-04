@@ -15,6 +15,7 @@
 //! * `server` (default): Enable the server-side abstractions for multipart requests. If the
 //! `hyper` feature is also set, enables integration with the Hyper HTTP server API.
 #![allow(unused_imports, deprecated)]
+#![cfg_attr(feature = "async-await", feature(async_await))]
 // FIXME: hiding irrelevant warnings during prototyping
 // #![deny(missing_docs)]
 
@@ -23,7 +24,7 @@ extern crate log;
 //extern crate env_logger;
 
 #[macro_use]
-extern crate futures;
+extern crate futures_core;
 
 #[macro_use]
 extern crate pin_utils;
@@ -38,7 +39,7 @@ extern crate lazy_static;
 
 use rand::Rng;
 
-use futures::{Future, Stream};
+use futures_core::{Future, Stream};
 use std::borrow::Cow;
 use std::process::Output;
 use std::str::Utf8Error;
@@ -140,7 +141,7 @@ impl<'a> BodyChunk for Cow<'a, [u8]> {
     }
 }
 
-impl BodyChunk for ::bytes::Bytes {
+impl BodyChunk for bytes::Bytes {
     #[inline]
     fn split_at(mut self, idx: usize) -> (Self, Self) {
         (self.split_to(idx), self)
@@ -149,6 +150,22 @@ impl BodyChunk for ::bytes::Bytes {
     #[inline]
     fn as_slice(&self) -> &[u8] {
         self
+    }
+}
+
+#[cfg(feature = "hyper")]
+impl BodyChunk for hyper::Chunk {
+    fn split_at(self, idx: usize) -> (Self, Self) {
+        let (left, right) = self.into_bytes().split_at(idx);
+        (left.into(), right.into())
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self
+    }
+
+    fn into_vec(self) -> Vec<u8> {
+        self.into()
     }
 }
 
