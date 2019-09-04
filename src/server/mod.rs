@@ -75,7 +75,7 @@ pub(crate) mod fuzzing {
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
-/// ### Low-Level Flow
+/// ### Low-Level API Flow
 /// For an initial release, a basic low-level API is provided which is expected to be supplemented
 /// or replaced later once more design work has taken place.
 ///
@@ -95,7 +95,7 @@ pub(crate) mod fuzzing {
 /// 4. Poll for the field's data chunks with [`.poll_field_chunk()](#method.poll_field_chunk)
 /// until `None` is returned, then loop back to step 2.
 ///
-/// Any data past before the first boundary and past the end of the terminating boundary is ignored
+/// Any data before the first boundary and past the end of the terminating boundary is ignored
 /// as it is out-of-spec and should not be expected to be left in the underlying stream intact.
 /// Please open an issue if you have a legitimate use-case for extraneous data in a multipart request.
 pub struct Multipart<S: TryStream> {
@@ -162,7 +162,7 @@ where
     }
 
     /// Poll for the next boundary, returning `true` if a field should follow that boundary,
-    /// or `false` if the request is at an end. See the module-level docs for usage.
+    /// or `false` if the request is at an end. See above for the overall flow.
     ///
     /// If this returns `Ready(Ok(true))`, you may then begin
     /// [polling for the headers of the next field](#method.poll_field_headers).
