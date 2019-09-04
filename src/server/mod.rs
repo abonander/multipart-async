@@ -225,6 +225,8 @@ mod test {
             BOUNDARY
         );
         pin_mut!(multipart);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(true));
+        ready_assert_eq!(|cx| multipart.as_mut().poll_field_headers(cx), None);
         ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
 
