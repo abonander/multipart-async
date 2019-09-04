@@ -1,4 +1,4 @@
-// Copyright 2017 `multipart-async` Crate Developers
+// Copyright 2017-2 `multipart-async` Crate Developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -14,11 +14,10 @@
 //!
 //! * `server` (default): Enable the server-side abstractions for multipart requests. If the
 //! `hyper` feature is also set, enables integration with the Hyper HTTP server API.
-//!
-//! * `hyper` (default): Enable integration with the [Hyper](https://github.com/hyperium/hyper) HTTP library
-//! for client and/or server depending on which other feature flags are set.
-#![allow(unused_imports, deprecated)] // FIXME: hiding irrelevant warnings during prototyping
-                                      // #![deny(missing_docs)]
+#![allow(unused_imports, deprecated)]
+// FIXME: hiding irrelevant warnings during prototyping
+// #![deny(missing_docs)]
+
 #[macro_use]
 extern crate log;
 //extern crate env_logger;
@@ -28,9 +27,6 @@ extern crate futures;
 
 #[macro_use]
 extern crate pin_utils;
-
-#[cfg(feature = "hyper")]
-pub extern crate hyper;
 
 pub extern crate mime;
 

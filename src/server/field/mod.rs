@@ -9,7 +9,8 @@ use futures::{Poll, Stream, TryStream};
 use std::rc::Rc;
 use std::str;
 
-use crate::server::boundary::BoundaryFinder;
+use super::boundary::BoundaryFinder;
+use super::Multipart;
 
 use std::fmt;
 
@@ -25,33 +26,51 @@ pub(crate) use self::headers::ReadHeaders;
 use futures::task::Context;
 use std::pin::Pin;
 use crate::server::PushChunk;
+use futures::future::Ready;
+use futures_test::futures_core_reexport::Future;
 
-pub(super) fn new_field<S: TryStream>(
-    headers: FieldHeaders,
-    stream: Pin<&mut PushChunk<BoundaryFinder<S>, S::Ok>>,
-) -> Field<S> {
+pub struct NextField<'a, S: TryStream + 'a> {
+    multipart: Option<Pin<&'a mut Multipart<S>>>,
+    has_next_field: bool,
+}
 
-    Field {
-        headers,
-        data: FieldData { stream },
-        _priv: (),
+impl<'a, S: 'a> NextField<'a, S> {
+    pub(crate) fn new(multipart: Pin<&'a mut Multipart<S>>) {
+        NextField {
+            multipart,
+            has_next_field: false,
+        }
+    }
+}
+
+impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
+    type Output = Option<Result<Field<'a, S>, S::Error>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        use PollState::*;
+
+        // `false` and `multipart = Some` means we haven't polled for next field yet
+        self.has_next_field = self.has_next_field
+            || ready!(self.multipart.as_pin_mut()?.poll_has_next_field(cx)?);
+
+        if !self.has_next_field {
+            // end of stream, next `?` will return
+            self.multipart = None;
+        }
+
+        Ready(Some(Field {
+            headers: ready!(self.multipart.as_pin_mut()?.poll_field_headers(cx)?),
+            data: FieldData {
+                multipart: self.multipart.take()?
+            },
+            _priv: ()
+        }))
     }
 }
 
 /// A single field in a multipart stream.
 ///
 /// The data of the field is provided as a `Stream` impl in the `data` field.
-///
-/// To avoid the next field being initialized before this one is done being read
-/// (in a linear stream), only one instance per `Multipart` instance is allowed at a time.
-/// A `Drop` implementation on `FieldData` is used to notify `Multipart` that this field is done
-/// being read, thus:
-///
-/// ### Warning About Leaks
-/// If this value or the contained `FieldData` is leaked (via `mem::forget()` or some
-/// other mechanism), then the parent `Multipart` will never be able to yield the next field in the
-/// stream. The task waiting on the `Multipart` will also never be notified, which, depending on the
-/// event loop/reactor/executor implementation, may cause a deadlock.
 pub struct Field<'a, S: TryStream + 'a> {
     /// The headers of this field, including the name, filename, and `Content-Type`, if provided.
     pub headers: FieldHeaders,
@@ -73,11 +92,7 @@ impl<S: TryStream> fmt::Debug for Field<'_, S> {
 ///
 /// It may be read to completion via the `Stream` impl, or collected to a string with `read_text()`.
 pub struct FieldData<'a, S: TryStream + 'a> {
-    stream: Pin<&'a mut PushChunk<BoundaryFinder<S>, S::Ok>>,
-}
-
-impl<'a, S: TryStream + 'a> FieldData<'a, S> {
-    unsafe_unpinned!(stream: Pin<&'a mut PushChunk<BoundaryFinder<S>, S::Ok>>);
+    multipart: Pin<&'a mut Multipart<S>>,
 }
 
 impl<S: TryStream> Stream for FieldData<'_, S>
@@ -88,6 +103,6 @@ where
     type Item = Result<S::Ok, S::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.stream().as_mut().poll_next(cx)
+        self.multipart.as_mut().poll_field_chunk(cx)
     }
 }

@@ -22,7 +22,7 @@ use crate::{BodyChunk, StreamError};
 use crate::helpers::*;
 
 use self::boundary::BoundaryFinder;
-pub use self::field::{FieldHeaders};
+pub use self::field::{Field, FieldData, FieldHeaders, NextField};
 use self::field::ReadHeaders;
 
 macro_rules! try_opt (
@@ -231,6 +231,12 @@ where
             self.inner().poll_next(cx)
         } else {
             Poll::Ready(None)
+        }
+    }
+
+    pub fn next_field(self: Pin<&mut Self>) -> NextField<S> {
+        NextField {
+
         }
     }
 }
