@@ -265,6 +265,70 @@ mod test {
             Some(Ok(&b"field data"[..]))
         );
 
+        ready_assert_eq!(|cx| multipart.as_mut().poll_body_chunk(cx), None);
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
+    }
+
+    #[test]
+    fn test_two_fields() {
+        let _ = ::env_logger::try_init();
+        let multipart = Multipart::with_body(
+            mock_stream(&[
+                b"--boundary\r", b"\n",
+                b"Content-Disposition:",
+                b" form-data; name=",
+                b"\"foo\"",
+                b"\r\n\r\n",
+                b"field data",
+                b"\r", b"\n--boundary\r\n",
+                b"Content-Disposition: form-data; name=", b"foo-", b"data",
+                b"; filename=", b"\"foo.txt\"", b"\r\n",
+                b"Content-Type: ", b"text/plain; charset", b"=utf-8", b"\r\n", b"\r\n",
+                b"field data--2\r\n--data--field",
+                b"\r\n--boundary--"
+            ]),
+            BOUNDARY
+        );
+        pin_mut!(multipart);
+
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(true));
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_field_headers(cx),
+            Some(Ok(FieldHeaders {
+                name: "foo".into(),
+                filename: None,
+                content_type: None,
+                ext_headers: Default::default(),
+                _backcompat: (),
+            }))
+        );
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_body_chunk(cx),
+            Some(Ok(&b"field data"[..]))
+        );
+        ready_assert_eq!(|cx| multipart.as_mut().poll_body_chunk(cx), None);
+
+        ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(true));
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_field_headers(cx),
+            Some(Ok(FieldHeaders {
+                name: "foo-data".into(),
+                filename: Some("foo.txt".into()),
+                content_type: Some(mime::TEXT_PLAIN_UTF_8),
+                ext_headers: Default::default(),
+                _backcompat: (),
+            }))
+        );
+
+        ready_assert_eq!(
+            |cx| multipart.as_mut().poll_body_chunk(cx),
+            Some(Ok(&b"field data--2\r\n--data--field"[..]))
+        );
+        ready_assert_eq!(|cx| multipart.as_mut().poll_body_chunk(cx), None);
+
         ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
 }
