@@ -48,7 +48,7 @@ impl<'a, S: TryStream + 'a> NextField<'a, S> {
 }
 
 impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
-    type Output = Option<Result<Field<'a, S>, S::Error>>;
+    type Output = Result<Option<Field<'a, S>>, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // since we can't use `?` with `Option<...>` in this context
@@ -57,14 +57,14 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
                 if let Some(ref mut multipart) = self.multipart {
                     multipart.as_mut()
                 } else {
-                    return Ready(None);
+                    return Ready(Ok(None));
                 }
             };
             (take) => {
                 if let Some(multipart) = self.multipart.take() {
                     multipart
                 } else {
-                    return Ready(None);
+                    return Ready(Ok(None));
                 }
             }
         }
@@ -78,7 +78,7 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
             self.multipart = None;
         }
 
-        Ready(Some(Ok(Field {
+        Ready(Ok(Some(Field {
             headers: ready!(multipart!(get).poll_field_headers(cx)?),
             data: FieldData {
                 multipart: multipart!(take)

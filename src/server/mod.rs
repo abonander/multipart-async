@@ -237,29 +237,29 @@ where
     /// Get a future yielding the next field in the stream, if the stream is not at an end.
     ///
     /// ```rust
-    /// # #[cfg(not(feature = "async-await"))] fn main() { }
-    /// # #[cfg(feature = "async-await")]
-    /// # fn main() {
+    /// # #![cfg(feature = "async-await")]
+    /// # #[macro_use] extern crate futures;
     /// use futures::prelude::*;
+    /// # use multipart_async::test_util;
     /// use multipart_async::server::Multipart;
     /// use std::error::Error;
     ///
     /// async fn example() -> Result<(), Box<dyn Error>> {
-    /// #   let stream = ::test_util::mock_stream(::test_util::TEST_SINGLE_FIELD);
+    /// #   let stream = test_util::mock_stream(test_util::TEST_SINGLE_FIELD);
     ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
     ///     let multipart = Multipart::with_body(stream, "boundary");
     ///     pin_mut!(multipart);
     ///     while let Some(mut field) = multipart.next_field().await? {
-    ///         println!("\nfield: {:?}", field.headers);
-    ///         while let Some(chunk) = field.data.next().await? {
+    ///         println!("field: {:?}", field.headers);
+    ///         // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
+    ///         while let Some(chunk) = field.data.try_next().await? {
     ///             println!("field data chunk: {:?}", chunk);
     ///         }
     ///     }
     ///
     ///     Ok(())
     /// }
-    /// # ::test_util::run_future_hot
-    /// # }
+    /// # test_util::run_future_hot(example())
     /// ```
     pub fn next_field(self: Pin<&mut Self>) -> NextField<S> {
         NextField::new(self)

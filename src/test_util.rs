@@ -1,3 +1,6 @@
+//! ### Note: not stable APIS
+//! The items exported in this module are not considered part of this crate's public API
+//! and may receive breaking changes in semver-compatible versions.
 use std::future::Future;
 use std::task::Poll::*;
 use std::thread;

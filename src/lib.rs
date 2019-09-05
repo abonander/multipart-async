@@ -45,9 +45,9 @@ use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops};
 
-#[cfg(any(test, fuzzing))]
+#[cfg(any(feature = "async-await", test, fuzzing))]
 #[macro_use]
-mod test_util;
+pub mod test_util;
 
 // FIXME: after server prototype is working
 //#[cfg(feature = "client")]
