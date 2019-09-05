@@ -3,15 +3,16 @@ use std::pin::Pin;
 use std::str;
 use std::task::Poll::{self, *};
 
-use futures_core::Stream;
+use futures_core::stream::{Stream, TryStream};
 use futures_core::task::Context;
+
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use httparse::{EMPTY_HEADER, Status};
 use mime::{self, Mime, Name};
 
-use crate::{BodyChunk, StreamError};
-use crate::helpers::*;
-use crate::server::PushChunk;
+use crate::BodyChunk;
+use crate::server::helpers::*;
+use crate::server::{Error, PushChunk};
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -84,10 +85,9 @@ impl ReadHeaders {
         &mut self,
         mut stream: Pin<&mut PushChunk<S, S::Ok>>,
         cx: &mut Context,
-    ) -> Poll<Result<FieldHeaders, S::Error>>
+    ) -> Poll<crate::server::Result<FieldHeaders, S::Error>>
     where
         S::Ok: BodyChunk,
-        S::Error: StreamError,
     {
         loop {
             trace!(
@@ -171,7 +171,7 @@ fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
     }
 }
 
-fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
+fn parse_headers<E>(bytes: &[u8]) -> crate::server::Result<FieldHeaders, E> {
     debug_assert!(
         bytes.ends_with(b"\r\n\r\n"),
         "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
@@ -206,15 +206,15 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
             }
 
             let str_val = str::from_utf8(header.value)
-                .or_else(|_| {
-                    error(
+                .map_err(|_| {
+                    Error::<E>::Parsing(
                         "multipart `Content-Disposition` header values \
-                         must be UTF-8 encoded",
+                         must be UTF-8 encoded".into(),
                     )
                 })?
                 .trim();
 
-            parse_cont_disp_val(str_val, &mut out_headers)?;
+            parse_cont_disp_val::<E>(str_val, &mut out_headers)?;
         } else if "Content-Type".eq_ignore_ascii_case(header.name) {
             if out_headers.content_type.is_some() {
                 // try to get the field name from `Content-Disposition` first
@@ -224,10 +224,10 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
             }
 
             let str_val = str::from_utf8(header.value)
-                .or_else(|_| {
-                    error(
+                .map_err(|_| {
+                    Error::<E>::Parsing(
                         "multipart `Content-Type` header values \
-                         must be UTF-8 encoded",
+                         must be UTF-8 encoded".into(),
                     )
                 })?
                 .trim();
@@ -281,7 +281,7 @@ fn parse_headers<E: StreamError>(bytes: &[u8]) -> Result<FieldHeaders, E> {
     Ok(out_headers)
 }
 
-fn parse_cont_disp_val<E: StreamError>(val: &str, out: &mut FieldHeaders) -> Result<(), E> {
+fn parse_cont_disp_val<E>(val: &str, out: &mut FieldHeaders) -> crate::server::Result<(), E> {
     debug!("parse_cont_disp_val({:?})", val);
 
     // Only take the first section, the rest can be in quoted strings that we want to handle
@@ -407,9 +407,7 @@ fn test_parse_keyval() {
 
 #[test]
 fn test_parse_headers() {
-    use crate::StringError;
-
-    let parse_headers = parse_headers::<StringError>;
+    let parse_headers = parse_headers::<std::convert::Infallible>;
 
     assert_eq!(
         parse_headers(b"Content-Disposition: form-data; name = \"field\"\r\n\r\n"),
@@ -563,15 +561,13 @@ fn test_parse_headers() {
 
 #[test]
 fn test_parse_headers_errors() {
-    use crate::StringError;
-
-    let parse_headers = parse_headers::<StringError>;
+    let parse_headers = parse_headers::<std::convert::Infallible>;
 
     // missing content-disposition
     assert_eq!(
         parse_headers(b"Content-Type: application/octet-stream\r\n\r\n").unwrap_err(),
-        "missing `Content-Disposition` header on a field \
-         (Content-Type: application/octet-stream) in this multipart request"
+        Error::Parsing("missing `Content-Disposition` header on a field \
+         (Content-Type: application/octet-stream) in this multipart request".into())
     );
 
     // duplicate content-disposition
@@ -581,7 +577,7 @@ fn test_parse_headers_errors() {
                         Content-Disposition: form-data; name = field2\r\n\r\n"
         )
         .unwrap_err(),
-        "duplicate `Content-Disposition` header on field: field"
+        Error::Parsing("duplicate `Content-Disposition` header on field: field".into())
     );
 }
 

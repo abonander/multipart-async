@@ -10,13 +10,14 @@ use futures_core::{Poll, Stream};
 
 use std::{fmt, mem};
 
-use crate::{BodyChunk, StreamError};
+use crate::BodyChunk;
 use super::PushChunk;
 
 use self::State::*;
 use futures_core::Poll::*;
+use futures_core::stream::TryStream;
 
-use crate::helpers::*;
+use super::helpers::*;
 use futures_core::task::Context;
 use std::pin::Pin;
 
@@ -49,12 +50,11 @@ impl<S> BoundaryFinder<S>
     where
         S: TryStream,
         S::Ok: BodyChunk,
-        S::Error: StreamError,
 {
     unsafe_pinned!(stream: S);
     unsafe_unpinned!(state: State<S::Ok>);
 
-    pub fn body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
+    pub fn body_chunk(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<super::Result<S::Ok, S::Error>>> {
         macro_rules! try_ready_opt (
             ($try:expr) => (
                 match $try {
@@ -300,7 +300,7 @@ impl<S> BoundaryFinder<S>
     pub fn consume_boundary(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Result<bool, S::Error>> {
+    ) -> Poll<super::Result<bool, S::Error>> {
         debug!("consuming boundary");
 
         while ready!(self.as_mut().body_chunk(cx)?).is_some() {
@@ -323,7 +323,7 @@ impl<S> BoundaryFinder<S>
         }
     }
 
-    fn confirm_boundary(mut self: Pin<&mut Self>, boundary: S::Ok) -> Poll<Result<bool, S::Error>> {
+    fn confirm_boundary(mut self: Pin<&mut Self>, boundary: S::Ok) -> Poll<super::Result<bool, S::Error>> {
         if boundary.len() < self.boundary_size(false) {
             return error(format!(
                 "boundary sequence too short: {}",
@@ -373,7 +373,7 @@ impl<S> BoundaryFinder<S>
         mut self: Pin<&mut Self>,
         first: S::Ok,
         second: S::Ok,
-    ) -> Poll<Result<bool, S::Error>> {
+    ) -> Poll<super::Result<bool, S::Error>> {
         let first = first.as_slice();
         let check_len = self.boundary_size(false) - first.len();
 
@@ -423,9 +423,8 @@ impl<S> Stream for BoundaryFinder<S>
     where
         S: TryStream,
         S::Ok: BodyChunk,
-        S::Error: StreamError,
 {
-    type Item = Result<S::Ok, S::Error>;
+    type Item = super::Result<S::Ok, S::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.body_chunk(cx)
@@ -551,7 +550,8 @@ fn partial_rmatch(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod test {
     use super::BoundaryFinder;
-    use crate::StringError;
+
+    use crate::server::Error;
 
     use crate::test_util::*;
 
@@ -578,7 +578,7 @@ mod test {
         pin_mut!(finder);
         ready_assert_eq!(
             |cx| finder.as_mut().consume_boundary(cx),
-            Err(StringError(
+            Err(Error::Parsing(
                 "unable to verify multipart boundary; expected: \"--boundary\" found: \"--bound\""
                     .into()
             ))

@@ -14,12 +14,12 @@ use std::cmp;
 
 use crate::server::fuzzing::*;
 
-pub use crate::StringError;
 use crate::helpers::show_bytes;
 use crate::server::{PushChunk, Multipart};
+use std::convert::Infallible;
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
-pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
+pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
     // this ensures the test boundary will always be split between chunks
     stream::iter(data.chunks(BOUNDARY.len() - 1))
         .map(Ok)

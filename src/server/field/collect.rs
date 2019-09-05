@@ -188,7 +188,7 @@ impl<S: BodyStream> ReadTextField<S> where S::Chunk: BodyChunk {
     }
 }
 
-impl<S: BodyStream> Future for ReadTextField<S> where S::Chunk: BodyChunk, S::Error: StreamError {
+impl<S: BodyStream> Future for ReadTextField<S> where S::Chunk: BodyChunk {
     type Output = Result<TextField, S::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -288,7 +288,7 @@ impl<S: BodyStream> fmt::Debug for ReadTextField<S> {
     }
 }
 
-impl<S: BodyStream> super::FieldData<'_, S> where S::Item: BodyChunk, S::Error: StreamError {
+impl<S: BodyStream> super::FieldData<'_, S> where S::Item: BodyChunk {
     /// Get a `Future` which attempts to read the field data to a string.
     ///
     /// If a field is meant to be read as text, it will either have no content-type or

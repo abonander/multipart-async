@@ -13,8 +13,7 @@ use futures_test::stream::StreamTestExt;
 use futures_test::task::noop_context;
 
 use futures_util::stream::{self, StreamExt};
-
-use crate::StringError;
+use std::convert::Infallible;
 
 pub const BOUNDARY: &str = "--boundary";
 
@@ -28,7 +27,7 @@ pub const TEST_SINGLE_FIELD: &[&[u8]] = &[
     b"\r", b"\n--boundary--"
 ];
 
-pub fn mock_stream<'d>(test_data: &'d [&'d [u8]]) -> impl Stream<Item = Result<&'d [u8], StringError>> + 'd {
+pub fn mock_stream<'d, E: 'd>(test_data: &'d [&'d [u8]]) -> impl Stream<Item = Result<&'d [u8], E>> + 'd {
     stream::iter(test_data.iter().cloned()).map(Ok).interleave_pending()
 }
 

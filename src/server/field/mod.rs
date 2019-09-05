@@ -15,7 +15,7 @@ use super::Multipart;
 
 use std::fmt;
 
-use crate::{BodyChunk, StreamError};
+use crate::BodyChunk;
 
 // mod collect;
 mod headers;
@@ -28,7 +28,11 @@ use futures_core::task::Context;
 use std::pin::Pin;
 use crate::server::PushChunk;
 
-/// A `Future` yielding `Option<Result<Field>>`
+/// A `Future` potentially yielding the next field in the multipart stream.
+///
+/// If there are no more fields in the stream, `Ok(None)` is returned.
+///
+/// See [`Multipart::next_field()`](../struct.Multipart.html#method.next_field) for usage.
 pub struct NextField<'a, S: TryStream + 'a> {
     multipart: Option<Pin<&'a mut Multipart<S>>>,
     has_next_field: bool,
@@ -47,8 +51,8 @@ impl<'a, S: TryStream + 'a> NextField<'a, S> {
     }
 }
 
-impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk, S::Error: StreamError {
-    type Output = Result<Option<Field<'a, S>>, S::Error>;
+impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk {
+    type Output = super::Result<Option<Field<'a, S>>, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // since we can't use `?` with `Option<...>` in this context
@@ -118,9 +122,8 @@ pub struct FieldData<'a, S: TryStream + 'a> {
 impl<S: TryStream> Stream for FieldData<'_, S>
 where
     S::Ok: BodyChunk,
-    S::Error: StreamError,
 {
-    type Item = Result<S::Ok, S::Error>;
+    type Item = super::Result<S::Ok, S::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.multipart.as_mut().poll_field_chunk(cx)

@@ -11,6 +11,7 @@
 //! to accept, parse, and serve HTTP `multipart/form-data` requests (file uploads).
 //!
 //! See the `Multipart` struct for more info.
+use std::fmt;
 use std::pin::Pin;
 
 use futures_core::{Future, Poll, Stream};
@@ -18,12 +19,15 @@ use futures_core::task::{self, Context};
 use http::{Method, Request};
 use mime::Mime;
 
-use crate::{BodyChunk, StreamError};
-use crate::helpers::*;
+use crate::BodyChunk;
+use self::helpers::*;
 
 use self::boundary::BoundaryFinder;
 pub use self::field::{Field, FieldData, FieldHeaders, NextField};
 use self::field::ReadHeaders;
+use std::convert::Infallible;
+
+mod helpers;
 
 macro_rules! try_opt (
     ($expr:expr) => (
@@ -42,10 +46,10 @@ macro_rules! ret_err (
 
 macro_rules! fmt_err(
     ($string:expr) => (
-        crate::helpers::error($string)
+        crate::server::helpers::error($string).into()
     );
     ($string:expr, $($args:tt)*) => (
-        crate::helpers::error(format!($string, $($args)*))
+        crate::server::helpers::error(format!($string, $($args)*)).into()
     );
 );
 
@@ -64,8 +68,8 @@ mod field;
 
 // pub use self::field::{ReadTextField, TextField};
 
-#[cfg(feature = "hyper")]
-mod hyper;
+// #[cfg(feature = "hyper")]
+// mod hyper;
 
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fuzzing {
@@ -75,9 +79,14 @@ pub(crate) mod fuzzing {
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
-/// ### Low-Level API Flow
-/// For an initial release, a basic low-level API is provided which is expected to be supplemented
+/// For an initial release, a basic API is provided which is expected to be supplemented
 /// or replaced later once more design work has taken place.
+///
+/// ### High-Level Flow
+/// 1. Await the next field with [`.next_field()`](#method.next_field).
+/// 2. Read the field data via the `Stream` impl on `Field::data`.
+///
+/// ### Low-Level Flow
 ///
 /// The flow is expected to work as follows, assuming any `Poll::Pending` and
 /// `Ready(Err(_))`/`Ready(Some(Err(_)))` results are handled in the typical fashion:
@@ -111,7 +120,6 @@ impl<S> Multipart<S>
 where
     S: TryStream,
     S::Ok: BodyChunk,
-    S::Error: StreamError,
 {
     unsafe_pinned!(inner: PushChunk<BoundaryFinder<S>, S::Ok>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
@@ -137,7 +145,7 @@ where
 
     /// If `req` is a `POST multipart/form-data` request, take the body and
     /// return the wrapped stream. Else, return the request.
-    pub fn try_from_request(req: Request<S>) -> Result<Self, Request<S>> {
+    pub fn try_from_request(req: Request<S>) -> std::result::Result<Self, Request<S>> {
         fn get_boundary(parts: &http::request::Parts) -> Option<String> {
             Some(
                 parts.headers.get(http::header::CONTENT_TYPE)?
@@ -205,6 +213,7 @@ where
             let this = self.as_mut().get_unchecked_mut();
             this.read_hdr
                 .read_headers(Pin::new_unchecked(&mut this.inner), cx)
+                .map(|r| r.map_err(Into::into))
         }
     }
 
@@ -226,7 +235,7 @@ where
     ///
     /// If you do want to inspect the raw field headers, they are separated by one CRLF (`\r\n`) and
     /// terminated by two CRLFs (`\r\n\r\n`) after which the field chunks follow.
-    pub fn poll_field_chunk(self: Pin<&mut Self>, cx: &mut Context) -> PollOpt<S::Ok, S::Error> {
+    pub fn poll_field_chunk(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<self::Result<S::Ok, S::Error>>> {
         if !self.read_hdr.is_reading_headers() {
             self.inner().poll_next(cx)
         } else {
@@ -269,6 +278,62 @@ where
     }
 }
 
+/// `multipart-async`'s server error type, containing a message about a problem in the stream.
+///
+/// This may either be from the underlying transport, or an error that occurred while parsing
+/// the request.
+#[derive(Debug, Eq, PartialEq)]
+pub enum Error<E> {
+    /// An error occurred while parsing the request. Either the body was improperly formatted,
+    /// a field was missing headers, or the underlying transport returned an abnormally small chunk.
+    Parsing(String),
+    /// An error was returned from the source stream.
+    Stream(E),
+}
+
+impl<E> From<E> for Error<E> {
+    fn from(e: E) -> Self {
+        Error::Stream(e)
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        use Error::*;
+
+        match self {
+            Parsing(_) => None,
+            Stream(ref e) => Some(e),
+        }
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for Error<E> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Error::*;
+
+        f.write_str("an error occurred while parsing the multipart/form-data body: ")?;
+
+        match self {
+            Parsing(ref e) => f.write_str(e),
+            Stream(ref e) => e.fmt(f),
+        }
+    }
+}
+
+impl<E> From<Error<Error<E>>> for Error<E> {
+    fn from(inner: Error<Error<E>>) -> Self {
+        use Error::*;
+
+        match inner {
+            Parsing(parsing) | Stream(Parsing(parsing)) => Parsing(parsing),
+            Stream(Stream(e)) => Stream(e)
+        }
+    }
+}
+
+pub type Result<T, E> = std::result::Result<T, Error<E>>;
+
 /// Struct wrapping a stream which allows a chunk to be pushed back to it to be yielded next.
 pub(crate) struct PushChunk<S, T> {
     stream: S,
@@ -304,7 +369,7 @@ impl<S: TryStream> PushChunk<S, S::Ok> where S::Ok: BodyChunk {
 }
 
 impl<S: TryStream> Stream for PushChunk<S, S::Ok> {
-    type Item = Result<S::Ok, S::Error>;
+    type Item = std::result::Result<S::Ok, S::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if let Some(pushed) = self.as_mut().pushed().take() {
@@ -321,6 +386,7 @@ mod test {
     use crate::test_util::mock_stream;
 
     use super::Multipart;
+    use std::convert::Infallible;
 
     const BOUNDARY: &str = "boundary";
 
@@ -328,7 +394,7 @@ mod test {
     fn test_empty_body() {
         let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
-            mock_stream(&[]),
+            mock_stream::<Infallible>(&[]),
             BOUNDARY
         );
         pin_mut!(multipart);

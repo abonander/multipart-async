@@ -37,13 +37,13 @@ pub extern crate http;
 #[macro_use]
 extern crate lazy_static;
 
-use rand::Rng;
-
 use futures_core::{Future, Stream};
 use std::borrow::Cow;
 use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops, fmt};
+
+mod helpers;
 
 #[cfg(any(test, fuzzing))]
 #[macro_use]
@@ -59,14 +59,12 @@ pub mod server;
 #[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
 
-mod helpers;
-
 /*#[cfg(all(test, feature = "client", feature = "server"))]
 mod local_test;
 */
-fn random_alphanumeric(len: usize) -> String {
+/*fn random_alphanumeric(len: usize) -> String {
     rand::thread_rng().gen_ascii_chars().take(len).collect()
-}
+}*/
 
 /// The operations required from a body stream's `Item` type.
 pub trait BodyChunk: Sized {
@@ -165,79 +163,6 @@ impl BodyChunk for hyper::Chunk {
     }
 
     fn into_vec(self) -> Vec<u8> {
-        self.into()
+        self[..].into()
     }
 }
-
-/// The operations required from a body stream's `Error` type.
-pub trait StreamError: From<io::Error> {
-    /// Wrap a static string into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_str(str: &'static str) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, str).into()
-    }
-
-    /// Wrap a dynamic string into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_string(string: String) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, string).into()
-    }
-
-    /// Wrap a `std::str::Utf8Error` into this error type.
-    ///
-    /// Goes through `io::Error` by default.
-    fn from_utf8(err: Utf8Error) -> Self {
-        io::Error::new(io::ErrorKind::InvalidData, err).into()
-    }
-}
-
-impl StreamError for io::Error {}
-
-/// Not a stable API
-#[doc(hidden)]
-#[derive(Debug, Eq, PartialEq)]
-pub struct StringError(String);
-
-impl crate::StreamError for StringError {
-    fn from_str(str: &'static str) -> Self {
-        StringError(str.into())
-    }
-
-    fn from_string(string: String) -> Self {
-        StringError(string)
-    }
-}
-
-impl Into<String> for StringError {
-    fn into(self) -> String {
-        self.0
-    }
-}
-
-impl From<std::io::Error> for StringError {
-    fn from(err: std::io::Error) -> Self {
-        StringError(err.to_string())
-    }
-}
-
-impl PartialEq<str> for StringError {
-    fn eq(&self, other: &str) -> bool {
-        self.0 == other
-    }
-}
-
-impl<'a> PartialEq<&'a str> for StringError {
-    fn eq(&self, other: &&'a str) -> bool {
-        self.0 == *other
-    }
-}
-
-impl fmt::Display for StringError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for StringError {}
