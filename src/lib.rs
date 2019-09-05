@@ -43,9 +43,9 @@ use futures_core::{Future, Stream};
 use std::borrow::Cow;
 use std::process::Output;
 use std::str::Utf8Error;
-use std::{io, ops};
+use std::{io, ops, fmt};
 
-#[cfg(any(feature = "async-await", test, fuzzing))]
+#[cfg(any(test, fuzzing))]
 #[macro_use]
 pub mod test_util;
 
@@ -233,3 +233,11 @@ impl<'a> PartialEq<&'a str> for StringError {
         self.0 == *other
     }
 }
+
+impl fmt::Display for StringError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StringError {}

@@ -240,15 +240,15 @@ where
     /// # #![cfg(feature = "async-await")]
     /// # #[macro_use] extern crate futures;
     /// use futures::prelude::*;
-    /// # use multipart_async::test_util;
+    /// # use std::iter;
+    /// # use futures_test::task::noop_context;
     /// use multipart_async::server::Multipart;
     /// use std::error::Error;
     ///
     /// async fn example() -> Result<(), Box<dyn Error>> {
-    /// #   let stream = test_util::mock_stream(test_util::TEST_SINGLE_FIELD);
+    /// #   let stream = stream::empty().map(Result::<&'static [u8], multipart_async::StringError>::Ok);
     ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
-    ///     let multipart = Multipart::with_body(stream, "boundary");
-    ///     pin_mut!(multipart);
+    ///     let mut multipart = Multipart::with_body(stream, "boundary");
     ///     while let Some(mut field) = multipart.next_field().await? {
     ///         println!("field: {:?}", field.headers);
     ///         // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
@@ -259,10 +259,13 @@ where
     ///
     ///     Ok(())
     /// }
-    /// # test_util::run_future_hot(example())
+    /// # let ref mut cx = noop_context();
+    /// # let future = example();
+    /// # pin_mut!(future);
+    /// # while let futures::Poll::Pending = future.as_mut().poll(cx) {}
     /// ```
-    pub fn next_field(self: Pin<&mut Self>) -> NextField<S> {
-        NextField::new(self)
+    pub fn next_field(&mut self) -> NextField<S> where Self: Unpin {
+        NextField::new(Pin::new(self))
     }
 }
 
