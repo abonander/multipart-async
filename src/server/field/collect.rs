@@ -216,7 +216,7 @@ impl<S: BodyStream> Future for ReadTextField<S> where S::Chunk: BodyChunk {
                 },
             };
 
-            let (valid, invalid) = chunk.split_at(split_idx);
+            let (valid, invalid) = chunk.split_into(split_idx);
 
             self.accum.push_str(str::from_utf8(valid.as_slice())
                 .expect("a `StreamChunk` was UTF-8 before, now it's not"));

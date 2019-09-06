@@ -42,6 +42,7 @@ use std::borrow::Cow;
 use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops, fmt};
+use bytes::Bytes;
 
 mod helpers;
 
@@ -69,7 +70,7 @@ mod local_test;
 /// The operations required from a body stream's `Item` type.
 pub trait BodyChunk: Sized {
     /// Split the chunk at `idx`, returning `(self[..idx], self[idx..])`.
-    fn split_at(self, idx: usize) -> (Self, Self);
+    fn split_into(self, idx: usize) -> (Self, Self);
 
     /// Get the slice representing the data of this chunk.
     fn as_slice(&self) -> &[u8];
@@ -96,7 +97,7 @@ pub trait BodyChunk: Sized {
 }
 
 impl BodyChunk for Vec<u8> {
-    fn split_at(mut self, idx: usize) -> (Self, Self) {
+    fn split_into(mut self, idx: usize) -> (Self, Self) {
         let other = self.split_off(idx);
         (self, other)
     }
@@ -111,7 +112,7 @@ impl BodyChunk for Vec<u8> {
 }
 
 impl<'a> BodyChunk for &'a [u8] {
-    fn split_at(self, idx: usize) -> (Self, Self) {
+    fn split_into(self, idx: usize) -> (Self, Self) {
         self.split_at(idx)
     }
 
@@ -121,7 +122,7 @@ impl<'a> BodyChunk for &'a [u8] {
 }
 
 impl<'a> BodyChunk for Cow<'a, [u8]> {
-    fn split_at(self, idx: usize) -> (Self, Self) {
+    fn split_into(self, idx: usize) -> (Self, Self) {
         fn cow_tup<'a, T: Into<Cow<'a, [u8]>>>(
             (left, right): (T, T),
         ) -> (Cow<'a, [u8]>, Cow<'a, [u8]>) {
@@ -129,32 +130,35 @@ impl<'a> BodyChunk for Cow<'a, [u8]> {
         }
 
         match self {
-            Cow::Borrowed(slice) => cow_tup(slice.split_at(idx)),
-            Cow::Owned(vec) => cow_tup(vec.split_at(idx)),
+            Cow::Borrowed(slice) => cow_tup(slice.split_into(idx)),
+            Cow::Owned(vec) => cow_tup(vec.split_into(idx)),
         }
     }
 
     fn as_slice(&self) -> &[u8] {
         &**self
     }
+
+    fn into_vec(self) -> Vec<u8> {
+        self.into_owned()
+    }
 }
 
-impl BodyChunk for bytes::Bytes {
-    #[inline]
-    fn split_at(mut self, idx: usize) -> (Self, Self) {
-        (self.split_to(idx), self)
+impl BodyChunk for Bytes {
+    fn split_into(mut self, idx: usize) -> (Self, Self) {
+        let right = self.split_off(idx);
+        (self, right)
     }
 
-    #[inline]
     fn as_slice(&self) -> &[u8] {
-        self
+        self.as_ref()
     }
 }
 
 #[cfg(feature = "hyper")]
 impl BodyChunk for hyper::Chunk {
-    fn split_at(self, idx: usize) -> (Self, Self) {
-        let (left, right) = self.into_bytes().split_at(idx);
+    fn split_into(self, idx: usize) -> (Self, Self) {
+        let (left, right) = self.into_bytes().split_into(idx);
         (left.into(), right.into())
     }
 
@@ -163,6 +167,6 @@ impl BodyChunk for hyper::Chunk {
     }
 
     fn into_vec(self) -> Vec<u8> {
-        self[..].into()
+        self.into()
     }
 }

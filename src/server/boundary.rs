@@ -170,16 +170,16 @@ impl<S> BoundaryFinder<S>
                     let ret = if res.incl_crlf {
                         if partial.len() < bnd_start {
                             // `partial` ended with a `<CR>` and `chunk` starts with `<LF>--<boundary>`
-                            *self.as_mut().state() = Found(chunk.split_at(bnd_start - partial.len()).1);
-                            partial.split_at(res.idx).0
+                            *self.as_mut().state() = Found(chunk.split_into(bnd_start - partial.len()).1);
+                            partial.split_into(res.idx).0
                         } else {
-                            let (ret, rem) = partial.split_at(res.idx);
-                            let (_, first) = rem.split_at(2);
+                            let (ret, rem) = partial.split_into(res.idx);
+                            let (_, first) = rem.split_into(2);
                             *self.as_mut().state() = Split(first, chunk);
                             ret
                         }
                     } else {
-                        let (ret, first) = partial.split_at(res.idx);
+                        let (ret, first) = partial.split_into(res.idx);
                         *self.as_mut().state() = Split(first, chunk);
                         ret
                     };
@@ -214,11 +214,11 @@ impl<S> BoundaryFinder<S>
                 trace!("partial boundary: {:?}", self.state);
                 None
             } else {
-                let (ret, bnd) = chunk.split_at(res.idx);
+                let (ret, bnd) = chunk.split_into(res.idx);
 
                 let bnd = if res.incl_crlf {
                     // cut off the preceding CRLF
-                    bnd.split_at(2).1
+                    bnd.split_into(2).1
                 } else {
                     bnd
                 };
@@ -336,7 +336,7 @@ impl<S> BoundaryFinder<S>
             );
         }
 
-        let (boundary, rem) = boundary.split_at(self.boundary_size(false));
+        let (boundary, rem) = boundary.split_into(self.boundary_size(false));
         let boundary = boundary.as_slice();
 
         trace!("confirming boundary: {}", show_bytes(boundary));
@@ -390,7 +390,7 @@ impl<S> BoundaryFinder<S>
             );
         }
 
-        let (second, rem) = second.split_at(check_len);
+        let (second, rem) = second.split_into(check_len);
         let second = second.as_slice();
 
         set_state!(self = Remainder(rem));
