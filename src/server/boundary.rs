@@ -20,6 +20,7 @@ use futures_core::stream::TryStream;
 use super::helpers::*;
 use futures_core::task::Context;
 use std::pin::Pin;
+use crate::server::Error;
 
 pub type PollOpt<T, E> = Poll<Option<Result<T, E>>>;
 
@@ -50,6 +51,7 @@ impl<S> BoundaryFinder<S>
     where
         S: TryStream,
         S::Ok: BodyChunk,
+        S::Error: Into<Error<S::Error>>,
 {
     unsafe_pinned!(stream: S);
     unsafe_unpinned!(state: State<S::Ok>);
@@ -59,23 +61,28 @@ impl<S> BoundaryFinder<S>
             ($try:expr) => (
                 match $try {
                     Poll::Ready(Some(Ok(val))) => val,
+                    Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e.into()))),
                     Poll::Ready(None) => {
                         set_state!(self = End);
                         return Ready(None);
                     }
-                    other => return other.into(),
+                    Pending => return Pending,
                 }
             );
             ($try:expr; $restore:expr) => (
                 match $try {
                     Poll::Ready(Some(Ok(val))) => val,
+                    Poll::Ready(Some(Err(e))) => {
+                        set_state!(self = $restore);
+                        return Poll::Ready(Some(Err(e.into())));
+                    },
                     Poll::Ready(None) => {
                         set_state!(self = End);
                         return Ready(None);
                     },
-                    other => {
+                    Pending => {
                         set_state!(self = $restore);
-                        return other.into();
+                        return Pending;
                     }
                 }
             )
@@ -115,11 +122,11 @@ impl<S> BoundaryFinder<S>
                         Ready(Some(chunk)) => chunk,
                         Ready(None) => {
                             set_state!(self = End);
-                            return ready_err(format!(
+                            ret_err!(
                                 "unable to verify multipart boundary; expected: \"{}\" found: \"{}\"",
                                 show_bytes(&self.boundary),
                                 show_bytes(partial.as_slice())
-                            ));
+                            );
                         }
                         Pending => {
                             set_state!(self = Partial(partial, res));
@@ -140,9 +147,8 @@ impl<S> BoundaryFinder<S>
 
                     if needed_len > chunk.len() {
                         // hopefully rare; must be dealing with a poorly behaved stream impl
-                        return ready_err(
-                            format!("needed {} more bytes to verify boundary, got {}",
-                                    needed_len, chunk.len())
+                        ret_err!("needed {} more bytes to verify boundary, got {}",
+                                    needed_len, chunk.len()
                         );
                     }
 
@@ -325,10 +331,10 @@ impl<S> BoundaryFinder<S>
 
     fn confirm_boundary(mut self: Pin<&mut Self>, boundary: S::Ok) -> Poll<super::Result<bool, S::Error>> {
         if boundary.len() < self.boundary_size(false) {
-            return error(format!(
+            ret_err!(
                 "boundary sequence too short: {}",
                 show_bytes(boundary.as_slice())
-            ));
+            );
         }
 
         let (boundary, rem) = boundary.split_at(self.boundary_size(false));
@@ -378,11 +384,11 @@ impl<S> BoundaryFinder<S>
         let check_len = self.boundary_size(false) - first.len();
 
         if second.len() < check_len {
-            return error(format!(
+            ret_err!(
                 "split boundary sequence too short: ({}, {})",
                 show_bytes(first),
                 show_bytes(second.as_slice())
-            ));
+            );
         }
 
         let (second, rem) = second.split_at(check_len);

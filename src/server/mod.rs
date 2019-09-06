@@ -26,6 +26,7 @@ use self::boundary::BoundaryFinder;
 pub use self::field::{Field, FieldData, FieldHeaders, NextField};
 use self::field::ReadHeaders;
 use std::convert::Infallible;
+use std::borrow::Cow;
 
 mod helpers;
 
@@ -40,16 +41,20 @@ macro_rules! try_opt (
 
 macro_rules! ret_err (
     ($($args:tt)+) => (
-            return fmt_err!($($args)+);
+        return fmt_err!($($args)+).into();
     )
 );
 
-macro_rules! fmt_err(
+macro_rules! ret_ok(
+    ($expr:expr) => (return Ok($expr).into());
+);
+
+macro_rules! fmt_err (
     ($string:expr) => (
-        crate::server::helpers::error($string).into()
+        Err($string.into())
     );
     ($string:expr, $($args:tt)*) => (
-        crate::server::helpers::error(format!($string, $($args)*)).into()
+        Err(format!($string, $($args)*).into())
     );
 );
 
@@ -120,6 +125,7 @@ impl<S> Multipart<S>
 where
     S: TryStream,
     S::Ok: BodyChunk,
+    S::Error: Into<Error<S::Error>>
 {
     unsafe_pinned!(inner: PushChunk<BoundaryFinder<S>, S::Ok>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
@@ -286,14 +292,27 @@ where
 pub enum Error<E> {
     /// An error occurred while parsing the request. Either the body was improperly formatted,
     /// a field was missing headers, or the underlying transport returned an abnormally small chunk.
-    Parsing(String),
+    Parsing(Cow<'static, str>),
     /// An error was returned from the source stream.
     Stream(E),
 }
 
-impl<E> From<E> for Error<E> {
-    fn from(e: E) -> Self {
-        Error::Stream(e)
+impl<E> From<String> for Error<E> {
+    fn from(e: String) -> Self {
+        Self::Parsing(e.into())
+    }
+}
+
+impl<E> From<&'static str> for Error<E> {
+    fn from(e: &'static str) -> Self {
+        Self::Parsing(e.into())
+    }
+}
+
+#[cfg(feature = "hyper")]
+impl From<hyper::Error> for Error<hyper::Error> {
+    fn from(e: hyper::Error) -> Self {
+        Self::Stream(e)
     }
 }
 
@@ -302,7 +321,7 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
         use Error::*;
 
         match self {
-            Parsing(_) => None,
+            Parsing(ref e) => None,
             Stream(ref e) => Some(e),
         }
     }
@@ -312,7 +331,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Error::*;
 
-        f.write_str("an error occurred while parsing the multipart/form-data body: ")?;
+        f.write_str("error occured while reading multipart body: ");
 
         match self {
             Parsing(ref e) => f.write_str(e),

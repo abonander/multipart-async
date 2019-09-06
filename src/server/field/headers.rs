@@ -13,6 +13,7 @@ use mime::{self, Mime, Name};
 use crate::BodyChunk;
 use crate::server::helpers::*;
 use crate::server::{Error, PushChunk};
+use http::Response;
 
 const MAX_BUF_LEN: usize = 1024;
 const MAX_HEADERS: usize = 4;
@@ -138,7 +139,7 @@ impl ReadHeaders {
             }
 
             if self.accumulator.len().saturating_add(chunk.len()) > MAX_BUF_LEN {
-                return ready_err("headers section too long or trailing double-CRLF missing");
+                ret_err!("headers section too long or trailing double-CRLF missing");
             }
 
             self.accumulator.extend_from_slice(chunk.as_slice());
@@ -171,7 +172,7 @@ fn header_end_split(first: &[u8], second: &[u8]) -> Option<usize> {
     }
 }
 
-fn parse_headers<E>(bytes: &[u8]) -> crate::server::Result<FieldHeaders, E> {
+fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
     debug_assert!(
         bytes.ends_with(b"\r\n\r\n"),
         "header byte sequence does not end with `\\r\\n\\r\\n`: {}",
@@ -207,14 +208,12 @@ fn parse_headers<E>(bytes: &[u8]) -> crate::server::Result<FieldHeaders, E> {
 
             let str_val = str::from_utf8(header.value)
                 .map_err(|_| {
-                    Error::<E>::Parsing(
-                        "multipart `Content-Disposition` header values \
-                         must be UTF-8 encoded".into(),
-                    )
+                    "multipart `Content-Disposition` header values \
+                         must be UTF-8 encoded"
                 })?
                 .trim();
 
-            parse_cont_disp_val::<E>(str_val, &mut out_headers)?;
+            parse_cont_disp_val(str_val, &mut out_headers)?;
         } else if "Content-Type".eq_ignore_ascii_case(header.name) {
             if out_headers.content_type.is_some() {
                 // try to get the field name from `Content-Disposition` first
@@ -225,25 +224,23 @@ fn parse_headers<E>(bytes: &[u8]) -> crate::server::Result<FieldHeaders, E> {
 
             let str_val = str::from_utf8(header.value)
                 .map_err(|_| {
-                    Error::<E>::Parsing(
-                        "multipart `Content-Type` header values \
-                         must be UTF-8 encoded".into(),
-                    )
+                    "multipart `Content-Type` header values \
+                         must be UTF-8 encoded"
                 })?
                 .trim();
 
             out_headers.content_type = Some(
                 str_val
                     .parse::<Mime>()
-                    .or_else(|_| fmt_err!("could not parse MIME type from {:?}", str_val))?,
+                    .map_err(|_| format!("could not parse MIME type from {:?}", str_val))?,
             );
         } else {
-            let hdr_name = HeaderName::from_bytes(header.name.as_bytes()).or_else(|e| {
-                fmt_err!("error on multipart field header \"{}\": {}", header.name, e)
+            let hdr_name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|e| {
+                format!("error on multipart field header \"{}\": {}", header.name, e)
             })?;
 
-            let hdr_val = HeaderValue::from_bytes(bytes).or_else(|e| {
-                fmt_err!("error on multipart field header \"{}\": {}", header.name, e)
+            let hdr_val = HeaderValue::from_bytes(bytes).map_err(|e| {
+                format!("error on multipart field header \"{}\": {}", header.name, e)
             })?;
 
             out_headers.ext_headers.append(hdr_name, hdr_val);
@@ -281,7 +278,7 @@ fn parse_headers<E>(bytes: &[u8]) -> crate::server::Result<FieldHeaders, E> {
     Ok(out_headers)
 }
 
-fn parse_cont_disp_val<E>(val: &str, out: &mut FieldHeaders) -> crate::server::Result<(), E> {
+fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> Result<(), String> {
     debug!("parse_cont_disp_val({:?})", val);
 
     // Only take the first section, the rest can be in quoted strings that we want to handle

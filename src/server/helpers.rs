@@ -23,16 +23,3 @@ where
 {
     Poll::Ready(Ok(val).into())
 }
-
-pub fn error<T, E, S: Into<String>>(e: S) -> Result<T, E> {
-    Err(Error::Parsing(e.into()))
-}
-
-pub fn ready_err<T, E, S: Into<String>>(e: S) -> Poll<Result<T, E>> {
-    Poll::Ready(Err(Error::Parsing(e.into())))
-}
-
-pub fn utf8_err<T, E>(e: Utf8Error) -> Result<T, E> {
-    Err(Error::Parsing(e.to_string()))
-}
-
