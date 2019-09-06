@@ -51,7 +51,7 @@ impl<S> BoundaryFinder<S>
     where
         S: TryStream,
         S::Ok: BodyChunk,
-        S::Error: Into<Error<S::Error>>,
+        Error<S::Error>: From<S::Error>,
 {
     unsafe_pinned!(stream: S);
     unsafe_unpinned!(state: State<S::Ok>);
@@ -122,11 +122,11 @@ impl<S> BoundaryFinder<S>
                         Ready(Some(chunk)) => chunk,
                         Ready(None) => {
                             set_state!(self = End);
-                            ret_err!(
+                            return Ready(fmt_err!(
                                 "unable to verify multipart boundary; expected: \"{}\" found: \"{}\"",
                                 show_bytes(&self.boundary),
                                 show_bytes(partial.as_slice())
-                            );
+                            ).into());
                         }
                         Pending => {
                             set_state!(self = Partial(partial, res));
@@ -147,9 +147,8 @@ impl<S> BoundaryFinder<S>
 
                     if needed_len > chunk.len() {
                         // hopefully rare; must be dealing with a poorly behaved stream impl
-                        ret_err!("needed {} more bytes to verify boundary, got {}",
-                                    needed_len, chunk.len()
-                        );
+                        return Ready(fmt_err!("needed {} more bytes to verify boundary, got {}",
+                                    needed_len, chunk.len()).into());
                     }
 
                     let bnd_start = res.boundary_start();
@@ -430,7 +429,7 @@ impl<S> Stream for BoundaryFinder<S>
         S: TryStream,
         S::Ok: BodyChunk,
 {
-    type Item = super::Result<S::Ok, S::Error>;
+    type Item = Result<S::Ok, Error<S::Error>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.body_chunk(cx)

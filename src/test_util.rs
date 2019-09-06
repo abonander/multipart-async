@@ -27,7 +27,7 @@ pub const TEST_SINGLE_FIELD: &[&[u8]] = &[
     b"\r", b"\n--boundary--"
 ];
 
-pub fn mock_stream<'d, E: 'd>(test_data: &'d [&'d [u8]]) -> impl Stream<Item = Result<&'d [u8], E>> + 'd {
+pub fn mock_stream<'d>(test_data: &'d [&'d [u8]]) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
     stream::iter(test_data.iter().cloned()).map(Ok).interleave_pending()
 }
 

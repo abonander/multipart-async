@@ -51,10 +51,10 @@ macro_rules! ret_ok(
 
 macro_rules! fmt_err (
     ($string:expr) => (
-        Err($string.into())
+        Err(crate::server::Error::Parsing($string.into()))
     );
     ($string:expr, $($args:tt)*) => (
-        Err(format!($string, $($args)*).into())
+        Err(crate::server::Error::Parsing(format!($string, $($args)*).into()))
     );
 );
 
@@ -125,7 +125,6 @@ impl<S> Multipart<S>
 where
     S: TryStream,
     S::Ok: BodyChunk,
-    S::Error: Into<Error<S::Error>>
 {
     unsafe_pinned!(inner: PushChunk<BoundaryFinder<S>, S::Ok>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
@@ -218,8 +217,7 @@ where
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
             this.read_hdr
-                .read_headers(Pin::new_unchecked(&mut this.inner), cx)
-                .map(|r| r.map_err(Into::into))
+                .read_headers(Pin::new_unchecked(&mut this.inner), cx)?.map(Ok)
         }
     }
 
@@ -257,11 +255,12 @@ where
     /// use futures::prelude::*;
     /// # use std::iter;
     /// # use futures_test::task::noop_context;
+    /// # use std::convert::Infallible;
     /// use multipart_async::server::Multipart;
     /// use std::error::Error;
     ///
     /// async fn example() -> Result<(), Box<dyn Error>> {
-    /// #   let stream = stream::empty().map(Result::<&'static [u8], multipart_async::StringError>::Ok);
+    /// #   let stream = stream::empty().map(Result::<&'static [u8], Infallible>::Ok);
     ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
     ///     let mut multipart = Multipart::with_body(stream, "boundary");
     ///     while let Some(mut field) = multipart.next_field().await? {
@@ -297,22 +296,26 @@ pub enum Error<E> {
     Stream(E),
 }
 
-impl<E> From<String> for Error<E> {
-    fn from(e: String) -> Self {
-        Self::Parsing(e.into())
+impl<E> Error<E> {
+    fn parsing(s: impl Into<Cow<'static, str>>) -> Self {
+        Self::Parsing(s.into())
     }
 }
 
-impl<E> From<&'static str> for Error<E> {
-    fn from(e: &'static str) -> Self {
-        Self::Parsing(e.into())
+impl<E> From<E> for Error<E> {
+    fn from(inner: E) -> Self {
+        Self::Stream(inner)
     }
 }
 
-#[cfg(feature = "hyper")]
-impl From<hyper::Error> for Error<hyper::Error> {
-    fn from(e: hyper::Error) -> Self {
-        Self::Stream(e)
+impl<E> From<Error<Error<E>>> for Error<E> {
+    fn from(inner: Error<Error<E>>) -> Self {
+        use Error::*;
+
+        match inner {
+            Parsing(parsing) | Stream(Parsing(parsing)) => Parsing(parsing),
+            Stream(Stream(e)) => Stream(e)
+        }
     }
 }
 
@@ -336,17 +339,6 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
         match self {
             Parsing(ref e) => f.write_str(e),
             Stream(ref e) => e.fmt(f),
-        }
-    }
-}
-
-impl<E> From<Error<Error<E>>> for Error<E> {
-    fn from(inner: Error<Error<E>>) -> Self {
-        use Error::*;
-
-        match inner {
-            Parsing(parsing) | Stream(Parsing(parsing)) => Parsing(parsing),
-            Stream(Stream(e)) => Stream(e)
         }
     }
 }
@@ -413,7 +405,7 @@ mod test {
     fn test_empty_body() {
         let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
-            mock_stream::<Infallible>(&[]),
+            mock_stream(&[]),
             BOUNDARY
         );
         pin_mut!(multipart);

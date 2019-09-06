@@ -90,6 +90,8 @@ impl ReadHeaders {
     where
         S::Ok: BodyChunk,
     {
+        let map_err = Error::<S::Error>::parsing;
+
         loop {
             trace!(
                 "read_headers state: accumulator: {}",
@@ -117,12 +119,13 @@ impl ReadHeaders {
 
                 if !self.accumulator.is_empty() {
                     self.accumulator.extend_from_slice(headers.as_slice());
-                    let headers = parse_headers(&self.accumulator)?;
+                    let headers = parse_headers(&self.accumulator)
+                        .map_err(map_err)?;
                     self.accumulator.clear();
 
                     return ready_ok(headers);
                 } else {
-                    return ready_ok(parse_headers(headers.as_slice())?);
+                    return ready_ok(parse_headers(headers.as_slice()).map_err(map_err)?);
                 }
             } else if let Some(split_idx) = header_end_split(&self.accumulator, chunk.as_slice()) {
                 let (head, tail) = chunk.split_at(split_idx);
@@ -132,7 +135,7 @@ impl ReadHeaders {
                     stream.as_mut().push_chunk(tail);
                 }
 
-                let headers = parse_headers(&self.accumulator)?;
+                let headers = parse_headers(&self.accumulator).map_err(map_err)?;
                 self.accumulator.clear();
 
                 return ready_ok(headers);
@@ -183,12 +186,12 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
 
     let headers = match httparse::parse_headers(bytes, &mut header_buf) {
         Ok(Status::Complete((_, headers))) => headers,
-        Ok(Status::Partial) => ret_err!("field headers incomplete: {}", show_bytes(bytes)),
-        Err(e) => ret_err!(
+        Ok(Status::Partial) => return Err(format!("field headers incomplete: {}", show_bytes(bytes))),
+        Err(e) => return Err(format!(
             "error parsing headers: {}; from buffer: {}",
             e,
             show_bytes(bytes)
-        ),
+        )),
     };
 
     trace!("parsed headers: {:?}", headers);
@@ -200,10 +203,10 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
     for header in headers {
         if "Content-Disposition".eq_ignore_ascii_case(header.name) {
             if !out_headers.name.is_empty() {
-                ret_err!(
+                return Err(format!(
                     "duplicate `Content-Disposition` header on field: {}",
                     out_headers.name
-                );
+                ));
             }
 
             let str_val = str::from_utf8(header.value)
@@ -250,29 +253,29 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
     if out_headers.name.is_empty() {
         // missing `name` parameter in a provided `Content-Disposition` is covered separately
         if let Some(filename) = out_headers.filename {
-            ret_err!(
+            return Err(format!(
                 "missing `Content-Disposition` header on a field \
                  (filename: {}) in this multipart request",
                 filename
-            );
+            ));
         }
 
         if let Some(content_type) = out_headers.content_type {
-            ret_err!(
+            return Err(format!(
                 "missing `Content-Disposition` header on a field \
                  (Content-Type: {}) in this multipart request",
                 content_type
-            );
+            ));
         }
 
-        ret_err!("missing `Content-Disposition` header on a field in this multipart request");
+        return Err(format!("missing `Content-Disposition` header on a field in this multipart request"));
     }
 
     if dupe_cont_type {
-        ret_err!(
+        return Err(format!(
             "duplicate `Content-Type` header in field: {}",
             out_headers.name
-        );
+        ));
     }
 
     Ok(out_headers)
@@ -289,12 +292,12 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> Result<(), String> 
         .unwrap_or("")
         .eq_ignore_ascii_case("form-data")
     {
-        ret_err!(
+        return Err(format!(
             "unexpected/unsupported field header `Content-Disposition: {}` \
              in this multipart request; each field must have exactly one \
              `Content-Disposition: form-data` header with a `name` parameter",
             val
-        );
+        ));
     }
 
     let mut rem = sections.next().unwrap_or("");
@@ -313,10 +316,10 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> Result<(), String> 
     }
 
     if out.name.is_empty() {
-        ret_err!(
+        return Err(format!(
             "expected 'name' parameter in `Content-Disposition: {}`",
             val
-        );
+        ));
     }
 
     Ok(())
@@ -404,8 +407,6 @@ fn test_parse_keyval() {
 
 #[test]
 fn test_parse_headers() {
-    let parse_headers = parse_headers::<std::convert::Infallible>;
-
     assert_eq!(
         parse_headers(b"Content-Disposition: form-data; name = \"field\"\r\n\r\n"),
         Ok(FieldHeaders {
@@ -558,13 +559,11 @@ fn test_parse_headers() {
 
 #[test]
 fn test_parse_headers_errors() {
-    let parse_headers = parse_headers::<std::convert::Infallible>;
-
     // missing content-disposition
     assert_eq!(
         parse_headers(b"Content-Type: application/octet-stream\r\n\r\n").unwrap_err(),
-        Error::Parsing("missing `Content-Disposition` header on a field \
-         (Content-Type: application/octet-stream) in this multipart request".into())
+        "missing `Content-Disposition` header on a field \
+         (Content-Type: application/octet-stream) in this multipart request"
     );
 
     // duplicate content-disposition
@@ -574,7 +573,7 @@ fn test_parse_headers_errors() {
                         Content-Disposition: form-data; name = field2\r\n\r\n"
         )
         .unwrap_err(),
-        Error::Parsing("duplicate `Content-Disposition` header on field: field".into())
+        "duplicate `Content-Disposition` header on field: field"
     );
 }
 

@@ -26,7 +26,7 @@ pub(crate) use self::headers::ReadHeaders;
 //pub use self::collect::{ReadTextField, TextField};
 use futures_core::task::Context;
 use std::pin::Pin;
-use crate::server::PushChunk;
+use crate::server::{PushChunk, Error};
 
 /// A `Future` potentially yielding the next field in the multipart stream.
 ///
@@ -51,7 +51,7 @@ impl<'a, S: TryStream + 'a> NextField<'a, S> {
     }
 }
 
-impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk {
+impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk, Error<S::Error>: From<S::Error> {
     type Output = super::Result<Option<Field<'a, S>>, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -122,6 +122,7 @@ pub struct FieldData<'a, S: TryStream + 'a> {
 impl<S: TryStream> Stream for FieldData<'_, S>
 where
     S::Ok: BodyChunk,
+    Error<S::Error>: From<S::Error>
 {
     type Item = super::Result<S::Ok, S::Error>;
 
