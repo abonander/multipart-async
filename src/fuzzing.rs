@@ -4,6 +4,7 @@
 use futures_core::stream::Stream;
 use futures_test::stream::StreamTestExt;
 use futures_test::task::noop_context;
+use futures_util::future::FutureExt;
 use futures_util::stream::{self, StreamExt};
 
 use std::task::Poll::*;
@@ -31,8 +32,13 @@ pub fn fuzz_whole_request(fuzz_data: &[u8]) {
     pin_mut!(multipart);
 
     while let Ok(true) = until_ready!(|cx| multipart.as_mut().poll_has_next_field(cx)) {
-        if let Ok(_) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
-            while let Some(Ok(_)) = until_ready!(|cx| multipart.as_mut().poll_field_chunk(cx)) {}
+        if let Ok(mut field) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
+            if field.headers.is_text() {
+                let mut read_to_string = field.data.read_to_string();
+                let _ = until_ready!(|cx| read_to_string.poll_unpin(cx));
+            } else {
+                while let Some(Ok(_)) = until_ready!(|cx| field.data.poll_next_unpin()) {}
+            }
         }
     }
 }

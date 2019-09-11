@@ -27,6 +27,7 @@ pub use self::field::{Field, FieldData, FieldHeaders, NextField};
 use self::field::ReadHeaders;
 use std::convert::Infallible;
 use std::borrow::Cow;
+use std::str::Utf8Error;
 
 mod helpers;
 
@@ -292,6 +293,8 @@ pub enum Error<E> {
     /// An error occurred while parsing the request. Either the body was improperly formatted,
     /// a field was missing headers, or the underlying transport returned an abnormally small chunk.
     Parsing(Cow<'static, str>),
+    /// An error occurred while trying to read a field to a string.
+    Utf8(Utf8Error),
     /// An error was returned from the source stream.
     Stream(E),
 }
@@ -314,6 +317,7 @@ impl<E> From<Error<Error<E>>> for Error<E> {
 
         match inner {
             Parsing(parsing) | Stream(Parsing(parsing)) => Parsing(parsing),
+            Utf8(e) | Stream(Utf8(e)) => Utf8(e),
             Stream(Stream(e)) => Stream(e)
         }
     }
@@ -325,6 +329,7 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
 
         match self {
             Parsing(ref e) => None,
+            Utf8(ref e) => Some(e),
             Stream(ref e) => Some(e),
         }
     }
@@ -338,6 +343,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
 
         match self {
             Parsing(ref e) => f.write_str(e),
+            Utf8(ref e) => e.fmt(f),
             Stream(ref e) => e.fmt(f),
         }
     }

@@ -80,3 +80,5 @@ pub fn run_future_hot<F>(f: F) -> F::Output where F: Future {
     pin_mut!(f);
     until_ready!(|cx| f.as_mut().poll(cx))
 }
+
+pub fn assert_unpin<T: Unpin>() { }

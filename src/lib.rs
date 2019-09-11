@@ -43,6 +43,7 @@ use std::process::Output;
 use std::str::Utf8Error;
 use std::{io, ops, fmt};
 use bytes::Bytes;
+use std::slice::SliceIndex;
 
 mod helpers;
 
@@ -74,6 +75,12 @@ pub trait BodyChunk: Sized {
 
     /// Get the slice representing the data of this chunk.
     fn as_slice(&self) -> &[u8];
+
+    /// Slice the bytes in `self` according to the given range.
+    #[inline(always)]
+    fn slice<R>(&self, range: R) -> &R::Output where R: SliceIndex<[u8]> {
+        &self.as_slice()[range]
+    }
 
     /// Equivalent to `self.as_slice().len()`
     #[inline(always)]
