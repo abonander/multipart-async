@@ -8,7 +8,7 @@ use futures_core::{Future, Poll, Stream, TryStream};
 use std::task::Poll::*;
 
 use std::rc::Rc;
-use std::str;
+use std::{str, mem};
 
 use super::boundary::BoundaryFinder;
 use super::Multipart;
@@ -188,7 +188,7 @@ impl<S: TryStream> Future for ReadToString<'_, S>
 
                 self.string.push_str(
                     str::from_utf8(&surrogate[..width])
-                    .map_err::<S::Error, _>(Utf8)?
+                    .map_err(Utf8)?
                 );
 
                 let (_, rem) = data.split_into(width);
@@ -212,10 +212,17 @@ impl<S: TryStream> Future for ReadToString<'_, S>
                     let mut start = [0u8; 3];
                     start[..start_len].copy_from_slice(data.slice(e.valid_up_to()..));
 
-                    self.surrogate = Some((start, start_len));
+                    // `e.valid_up_to()` is specified to be `[-1, -3]` of `data.len()`
+                    self.surrogate = Some((start, start_len as u8));
                 }
             }
         }
+
+        if let Some((start, _)) = self.surrogate {
+            ret_err!("incomplete UTF-8 surrogate: {:?}", start);
+        }
+
+        Ready(Ok(mem::replace(&mut self.string, String::new())))
     }
 }
 
@@ -224,18 +231,20 @@ fn utf8_char_width(first: u8) -> Option<usize> {
     // https://github.com/rust-lang/rust/blob/fe6d05a/src/libcore/str/mod.rs#L1565
     match first {
         // ASCII characters are one byte
-        0x00 .. 0x80 => Some(1),
-        0xC2 .. 0xE0 => Some(2),
-        0xE0 .. 0xF0 => Some(3),
-        0xF0 .. 0xF5 => Some(4),
+        0x00 ..= 0x7F => Some(1),
+        0xC2 ..= 0xDF => Some(2),
+        0xE0 ..= 0xEF => Some(3),
+        0xF0 ..= 0xF4 => Some(4),
         _ => None
     }
 }
 
 #[test]
-fn assert_types_unpin<'a, S: TryStream + 'a>() {
+fn assert_types_unpin() {
     use crate::test_util::assert_unpin;
 
-    assert_unpin::<FieldData<'a, S>>();
-    assert_unpin::<ReadToString<'a, S>>();
+    fn inner<'a, S: TryStream + 'a>() {
+        assert_unpin::<FieldData<'a, S>>();
+        assert_unpin::<ReadToString<'a, S>>();
+    }
 }

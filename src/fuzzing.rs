@@ -31,13 +31,16 @@ pub fn fuzz_whole_request(fuzz_data: &[u8]) {
     let multipart = Multipart::with_body(chunk_fuzz_data(fuzz_data), BOUNDARY);
     pin_mut!(multipart);
 
-    while let Ok(true) = until_ready!(|cx| multipart.as_mut().poll_has_next_field(cx)) {
-        if let Ok(mut field) = until_ready!(|cx| multipart.as_mut().poll_field_headers(cx)) {
+    loop {
+        let mut multipart = multipart.as_mut();
+        let mut next_field = multipart.next_field();
+
+        if let Ok(Some(mut field)) = until_ready!(|cx| next_field.poll_unpin(cx)) {
             if field.headers.is_text() {
                 let mut read_to_string = field.data.read_to_string();
                 let _ = until_ready!(|cx| read_to_string.poll_unpin(cx));
             } else {
-                while let Some(Ok(_)) = until_ready!(|cx| field.data.poll_next_unpin()) {}
+                while let Some(Ok(_)) = until_ready!(|cx| field.data.poll_next_unpin(cx)) {}
             }
         }
     }
