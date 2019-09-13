@@ -15,7 +15,6 @@
 //! * `server` (default): Enable the server-side abstractions for multipart requests. If the
 //! `hyper` feature is also set, enables integration with the Hyper HTTP server API.
 #![allow(unused_imports, deprecated)]
-#![cfg_attr(feature = "async-await", feature(async_await))]
 // FIXME: hiding irrelevant warnings during prototyping
 // #![deny(missing_docs)]
 

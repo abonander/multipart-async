@@ -116,7 +116,6 @@ pub(crate) mod fuzzing {
 pub struct Multipart<S: TryStream> {
     inner: PushChunk<BoundaryFinder<S>, S::Ok>,
     read_hdr: ReadHeaders,
-    consumed: bool,
 }
 
 // Q: why can't we just wrap up these bounds into a trait?
@@ -129,7 +128,6 @@ where
 {
     unsafe_pinned!(inner: PushChunk<BoundaryFinder<S>, S::Ok>);
     unsafe_unpinned!(read_hdr: ReadHeaders);
-    unsafe_unpinned!(consumed: bool);
 
     /// Construct a new `Multipart` with the given body reader and boundary.
     ///
@@ -145,7 +143,6 @@ where
         Multipart {
             inner: PushChunk::new(BoundaryFinder::new(stream, boundary)),
             read_hdr: ReadHeaders::default(),
-            consumed: false,
         }
     }
 
@@ -339,7 +336,7 @@ impl<E: fmt::Display> fmt::Display for Error<E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Error::*;
 
-        f.write_str("error occured while reading multipart body: ");
+        f.write_str("error occured while reading multipart body: ")?;
 
         match self {
             Parsing(ref e) => f.write_str(e),

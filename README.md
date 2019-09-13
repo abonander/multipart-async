@@ -5,7 +5,8 @@ Multipart-async [![Build Status](https://travis-ci.org/abonander/multipart-async
 
 Futures-based client- and server-side abstractions for HTTP file uploads (POST requests with  `Content-Type: multipart/form-data`).
 
-Preliminary support for Hyper 0.11 is available via the `hyper` feature.
+Preliminary support for Hyper 0.13 and async/await; 
+requires 1.39 to build (nightly-2019-08-15, will be released to beta on 2019-09-26).
 
 License
 -------
