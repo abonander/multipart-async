@@ -248,7 +248,6 @@ where
     /// Get a future yielding the next field in the stream, if the stream is not at an end.
     ///
     /// ```rust
-    /// # #![cfg(feature = "async-await")]
     /// # #[macro_use] extern crate futures;
     /// use futures::prelude::*;
     /// # use std::iter;
