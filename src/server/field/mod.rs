@@ -201,12 +201,10 @@ impl<S: TryStream> Future for ReadToString<'_, S>
                     // we encountered an invalid surrogate
                     return Ready(Err(Utf8(e)));
                 } else {
-                    unsafe {
-                        self.string.push_str(unsafe {
-                            // Utf8Error specifies that `..e.valid_up_to()` is valid UTF-8
-                            str::from_utf8_unchecked(data.slice(..e.valid_up_to()))
-                        });
-                    }
+                    self.string.push_str(unsafe {
+                        // Utf8Error specifies that `..e.valid_up_to()` is valid UTF-8
+                        str::from_utf8_unchecked(data.slice(..e.valid_up_to()))
+                    });
 
                     let start_len = data.len() - e.valid_up_to();
                     let mut start = [0u8; 3];

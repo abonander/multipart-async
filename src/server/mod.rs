@@ -262,9 +262,14 @@ where
     ///     let mut multipart = Multipart::with_body(stream, "boundary");
     ///     while let Some(mut field) = multipart.next_field().await? {
     ///         println!("field: {:?}", field.headers);
-    ///         // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
-    ///         while let Some(chunk) = field.data.try_next().await? {
-    ///             println!("field data chunk: {:?}", chunk);
+    ///
+    ///         if field.headers.is_text() {
+    ///             println!("field text: {:?}", field.data.read_to_string().await?);
+    ///         } else {
+    ///             // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
+    ///             while let Some(chunk) = field.data.try_next().await? {
+    ///                 println!("field data chunk: {:?}", chunk);
+    ///             }
     ///         }
     ///     }
     ///
@@ -324,7 +329,7 @@ impl<E: std::error::Error + 'static> std::error::Error for Error<E> {
         use Error::*;
 
         match self {
-            Parsing(ref e) => None,
+            Parsing(_) => None,
             Utf8(ref e) => Some(e),
             Stream(ref e) => Some(e),
         }

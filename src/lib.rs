@@ -173,6 +173,6 @@ impl BodyChunk for hyper::Chunk {
     }
 
     fn into_vec(self) -> Vec<u8> {
-        self.into()
+        self.to_vec()
     }
 }
