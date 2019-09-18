@@ -64,4 +64,4 @@ required-features = ["hyper", "server"]
 
 [[test]]
 name = "curl-hyper"
-required-features = ["hyper", "server", "async-await"]
+required-features = ["hyper", "server"]
