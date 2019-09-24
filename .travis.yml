@@ -6,3 +6,8 @@ rust:
 os:
   - linux
   - osx
+
+script:
+  - cargo build
+  - cargo test
+  - cargo test --features "hyper,curl"

@@ -34,6 +34,10 @@ futures-test-preview = { version = "0.3.0-alpha.18", optional = true }
 
 hyper = { version = "0.13.0-alpha.1", optional = true }
 
+# only used in integration testing; optional instead of dev dep so it doesn't require cURL
+# to be installed for all contributors
+curl = { version = "0.4", optional = true }
+
 [features]
 client = []
 default = ["server"]
@@ -51,7 +55,6 @@ futures-preview = "0.3.0-alpha.18"
 futures-test-preview = "0.3.0-alpha.18"
 futures-util-preview = { version = "0.3.0-alpha.18", default-features = false }
 env_logger = "0.6.2"
-curl = "0.4"
 
 #[[bin]]
 #name = "form_test"
@@ -64,4 +67,4 @@ required-features = ["hyper", "server"]
 
 [[test]]
 name = "curl-hyper"
-required-features = ["hyper", "server"]
+required-features = ["hyper", "server", "curl"]
