@@ -50,9 +50,8 @@ mod helpers;
 #[macro_use]
 pub mod test_util;
 
-// FIXME: after server prototype is working
-//#[cfg(feature = "client")]
-//pub mod client;
+#[cfg(feature = "client")]
+pub mod client;
 
 #[cfg(feature = "server")]
 pub mod server;
