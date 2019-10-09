@@ -23,7 +23,7 @@ use crate::BodyChunk;
 use self::helpers::*;
 
 use self::boundary::BoundaryFinder;
-pub use self::field::{Field, FieldData, FieldHeaders, NextField};
+pub use self::field::{Field, FieldData, FieldHeaders, NextField, ReadToString};
 use self::field::ReadHeaders;
 use std::convert::Infallible;
 use std::borrow::Cow;
