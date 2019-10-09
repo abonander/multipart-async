@@ -4,30 +4,30 @@
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
-use futures_core::{Future, Poll, Stream, TryStream};
+
+use std::{mem, str};
+use std::fmt;
+use std::pin::Pin;
+use std::rc::Rc;
 use std::task::Poll::*;
 
-use std::rc::Rc;
-use std::{str, mem};
+use futures_core::{Future, Poll, Stream, TryStream};
+//pub use self::collect::{ReadTextField, TextField};
+use futures_core::task::Context;
+
+use crate::BodyChunk;
+use crate::server::{Error, PushChunk};
+use crate::server::Error::Utf8;
 
 use super::boundary::BoundaryFinder;
 use super::Multipart;
 
-use std::fmt;
-
-use crate::BodyChunk;
+pub use self::headers::FieldHeaders;
+pub(crate) use self::headers::ReadHeaders;
+use futures_util::TryStreamExt;
 
 // mod collect;
 mod headers;
-
-pub use self::headers::FieldHeaders;
-pub(crate) use self::headers::ReadHeaders;
-
-//pub use self::collect::{ReadTextField, TextField};
-use futures_core::task::Context;
-use std::pin::Pin;
-use crate::server::{PushChunk, Error};
-use crate::server::Error::Utf8;
 
 /// A `Future` potentially yielding the next field in the multipart stream.
 ///
@@ -88,7 +88,7 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
             data: FieldData {
                 multipart: multipart!(take)
             },
-            _priv: ()
+            _priv: (),
         })))
     }
 }
@@ -121,8 +121,9 @@ pub struct FieldData<'a, S: TryStream + 'a> {
     multipart: Pin<&'a mut Multipart<S>>,
 }
 
-impl<'a, S: TryStream + 'a> FieldData<'a, S> {
-
+impl<S: TryStream> FieldData<'_, S>
+    where S::Ok: BodyChunk,
+          Error<S::Error>: From<S::Error> {
     /// Return a `Future` which yields the result of reading this field's data to a `String`.
     ///
     /// ### Note: UTF-8 Only
@@ -135,19 +136,15 @@ impl<'a, S: TryStream + 'a> FieldData<'a, S> {
     /// use a non-UTF-8 charset, or:
     /// * the field is actually a text file encoded in a charset that is not UTF-8
     /// (most likely Windows-1252 or UTF-16).
-    pub fn read_to_string(self) -> ReadToString<'a, S> {
-        ReadToString {
-            multipart: self.multipart,
-            string: String::new(),
-            surrogate: None,
-        }
+    pub fn read_to_string(self) -> ReadToString<Self> {
+        ReadToString::new(self)
     }
 }
 
 impl<S: TryStream> Stream for FieldData<'_, S>
-where
-    S::Ok: BodyChunk,
-    Error<S::Error>: From<S::Error>
+    where
+        S::Ok: BodyChunk,
+        Error<S::Error>: From<S::Error>
 {
     type Item = super::Result<S::Ok, S::Error>;
 
@@ -156,13 +153,23 @@ where
     }
 }
 
-pub struct ReadToString<'a, S: TryStream> {
-    multipart: Pin<&'a mut Multipart<S>>,
+pub struct ReadToString<S: TryStream + Unpin> {
+    stream: S,
     string: String,
     surrogate: Option<([u8; 3], u8)>,
 }
 
-impl<S: TryStream> Future for ReadToString<'_, S>
+impl<S: TryStream + Unpin> ReadToString<S> {
+    pub fn new(stream: S) -> Self {
+        ReadToString {
+            stream,
+            string: String::new(),
+            surrogate: None,
+        }
+    }
+}
+
+impl<S: TryStream + Unpin> Future for ReadToString<S>
     where
         S::Ok: BodyChunk,
         Error<S::Error>: From<S::Error>
@@ -170,7 +177,7 @@ impl<S: TryStream> Future for ReadToString<'_, S>
     type Output = super::Result<String, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        while let Some(mut data) = ready!(self.multipart.as_mut().poll_field_chunk(cx)?) {
+        while let Some(mut data) = ready!(self.stream.try_poll_next_unpin(cx)?) {
             if let Some((start, start_len)) = self.surrogate {
                 assert!(start_len > 0 && start_len < 4, "start_len out of range: {:?}", start_len);
 
@@ -184,11 +191,11 @@ impl<S: TryStream> Future for ReadToString<'_, S>
 
                 let mut surrogate = [0u8; 4];
                 surrogate[..start_len].copy_from_slice(&start[..start_len]);
-                surrogate[start_len .. width].copy_from_slice(data.slice(..needed));
+                surrogate[start_len..width].copy_from_slice(data.slice(..needed));
 
                 self.string.push_str(
                     str::from_utf8(&surrogate[..width])
-                    .map_err(Utf8)?
+                        .map_err(Utf8)?
                 );
 
                 let (_, rem) = data.split_into(width);
@@ -229,10 +236,10 @@ fn utf8_char_width(first: u8) -> Option<usize> {
     // https://github.com/rust-lang/rust/blob/fe6d05a/src/libcore/str/mod.rs#L1565
     match first {
         // ASCII characters are one byte
-        0x00 ..= 0x7F => Some(1),
-        0xC2 ..= 0xDF => Some(2),
-        0xE0 ..= 0xEF => Some(3),
-        0xF0 ..= 0xF4 => Some(4),
+        0x00..=0x7F => Some(1),
+        0xC2..=0xDF => Some(2),
+        0xE0..=0xEF => Some(3),
+        0xF0..=0xF4 => Some(4),
         _ => None
     }
 }
@@ -243,6 +250,23 @@ fn assert_types_unpin() {
 
     fn inner<'a, S: TryStream + 'a>() {
         assert_unpin::<FieldData<'a, S>>();
-        assert_unpin::<ReadToString<'a, S>>();
     }
+
+    // `Unpin` is checked on `ReadToString` in `test_read_to_string()`.
+}
+
+#[test]
+fn test_read_to_string() {
+    use futures_util::TryFutureExt;
+
+    let test_data = crate::test_util::mock_stream(&[
+        b"Hello", b",", b" ", b"world!"
+    ]);
+
+    let mut read_to_string = ReadToString::new(test_data);
+
+    ready_assert_eq!(
+        |cx| read_to_string.try_poll_unpin(cx),
+        Ok("Hello, world!".to_string())
+    );
 }
