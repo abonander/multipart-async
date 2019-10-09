@@ -1,3 +1,9 @@
+// Copyright 2017-2019 `multipart-async` Crate Developers
+//
+// Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
+// http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
+// http://opensource.org/licenses/MIT>, at your option. This file may not be
+// copied, modified, or distributed except according to those terms.
 use std::error::Error;
 use std::future::Future;
 use std::io::{self, Cursor};
@@ -68,15 +74,17 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// Write a field of any type to the output. (Method for taking `AsyncRead`).
     ///
     /// If `content_type` is not set, the server assumes `Content-Type: text/plain`
-    /// ([RFC 7578 Section 4.4][7578-4.4]). Typically, the server will interpret it as a
-    /// non-file text field like with `application/x-www-form-urlencoded` form fields.
+    /// ([RFC 7578 Section 4.4][7578-4.4]).
     ///
-    /// If this field is meant to be interpreted as a file regardless of type, then pass
-    /// `mime::APPLICATION_OCTET_STREAM`.
+    /// Typically, if `filename` and `content_type` are omitted, the server will interpret it as a
+    /// non-file text field like with `application/x-www-form-urlencoded` form fields. Unless
+    /// a charset is manually specified, the server *should* assume the text encoding is UTF-8.
     ///
-    /// `filename` is optional in all cases and may be ignored by the server if `content_type`
-    /// is not set, or may cause the server to interpret the field as a text file instead
-    /// of a text field.
+    /// If `filename` is provided even if `content_type` is not set, it may cause the
+    /// server to interpret the field as a text file instead of a text field.
+    ///
+    /// If you want the server to interpret a field as a file regardless of type or filename,
+    /// pass a `content_type` of `mime::APPLICATION_OCTET_STREAM`.
     ///
     /// [7578-4.4]: https://tools.ietf.org/html/rfc7578#section-4.4
     pub async fn write_field<R: AsyncRead + Unpin>(&mut self, name: &str, filename: Option<&str>, content_type: Option<&Mime>, mut contents: R) -> io::Result<&mut Self> {
@@ -86,7 +94,8 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
         Ok(self)
     }
 
-    /// Like `.write_field()` but takes a `Stream`. See that method for details on these parameters.
+    /// Like [`.write_field()`](#method.write_field) but takes a `Stream`.
+    /// See that method for details on these parameters.
     ///
     /// Errors from the stream will be wrapped as `io::ErrorKind::Other`.
     pub async fn write_stream<B, E, S>(&mut self, name: &str, filename: Option<&str>, content_type: Option<&Mime>, mut contents: S) -> io::Result<&mut Self>
@@ -107,7 +116,8 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// If no content-type is known for the path extension or there is no extension,
     /// `application/octet-stream` is assumed to ensure the server interprets this field as a file.
     ///
-    /// If you want to override the filename or content-type, use `.write_field()` instead.
+    /// If you want to override the filename or content-type, use
+    /// [`.write_field()`](#method.write_field) instead.
     #[cfg(feature = "tokio-fs")]
     pub async fn write_file<P: AsRef<Path>>(&mut self, name: &str, path: P) -> io::Result<&mut Self> {
         let path = path.as_ref();
@@ -123,6 +133,10 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// The server must assume `Content-Type: text/plain` ([RFC 7578 Section 4.4][7578-4.4]).
     /// Typically, the server will interpret it as a non-file text field like with
     /// `application/x-www-form-urlencoded` form fields.
+    ///
+    /// If you want to pass a string but still set the filename and/or content type,
+    /// convert it to bytes with `.as_bytes()` and pass it to [`.write_field()`](#method.write_field)
+    /// instead, as byte slices implement `AsyncRead`.
     pub async fn write_text(&mut self, name: &str, text: &str) -> io::Result<&mut Self> {
         self.write_field(name, None, None, text.as_bytes()).await
     }
@@ -146,17 +160,6 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
 
         Ok(())
     }
-}
-
-#[test]
-fn test_multipart_writer_get_content_type() {
-    let writer = MultipartWriter {
-        inner: (),
-        boundary: "boundary".to_string(),
-        data_written: false,
-    };
-
-    assert_eq!(writer.get_content_type(), "multipart/form-data; boundary=boundary");
 }
 
 #[cfg(test)]

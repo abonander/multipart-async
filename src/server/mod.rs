@@ -1,4 +1,4 @@
-// Copyright 2017 `multipart-async` Crate Developers
+// Copyright 2017-2019 `multipart-async` Crate Developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -85,29 +85,26 @@ pub(crate) mod fuzzing {
 
 /// The server-side implementation of `multipart/form-data` requests.
 ///
-/// For an initial release, a basic API is provided which is expected to be supplemented
-/// or replaced later once more design work has taken place.
+/// After constructing with either the [`::with_body()`](#method.with_body) or
+/// [`::try_from_request()`](#method.try_from_request), two different workflows for processing the
+/// request are provided, assuming any `Poll::Pending` and `Ready(Err(_))`/`Ready(Some(Err(_)))`
+/// results are handled in the typical fashion:
 ///
 /// ### High-Level Flow
+///
 /// 1. Await the next field with [`.next_field()`](#method.next_field).
 /// 2. Read the field data via the `Stream` impl on `Field::data`.
+/// 3. Repeat until `.next_field()` returns `None`.
 ///
 /// ### Low-Level Flow
 ///
-/// The flow is expected to work as follows, assuming any `Poll::Pending` and
-/// `Ready(Err(_))`/`Ready(Some(Err(_)))` results are handled in the typical fashion:
-///
-/// 1. Use the [`try_from_request()`](#method.try_from_request) constructor to check if the request
-/// is a `multipart/form-data` request and if so, proceed to the next step, otherwise process it
-/// normally.
-///
-/// 2. Poll for the first field boundary with [`.poll_has_next_field()`](#method.poll_has_next_field);
+/// 1. Poll for the first field boundary with [`.poll_has_next_field()`](#method.poll_has_next_field);
 /// if it returns `true` proceed to the next step, if `false` the request is at an end.
 ///
-/// 3. Poll for the field's headers containing its name, content-type and other info with
+/// 2. Poll for the field's headers containing its name, content-type and other info with
 /// [`.poll_field_headers()`](#method.poll_field_headers).
 ///
-/// 4. Poll for the field's data chunks with [`.poll_field_chunk()](#method.poll_field_chunk)
+/// 3. Poll for the field's data chunks with [`.poll_field_chunk()](#method.poll_field_chunk)
 /// until `None` is returned, then loop back to step 2.
 ///
 /// Any data before the first boundary and past the end of the terminating boundary is ignored
@@ -198,6 +195,7 @@ where
     /// * did not contain a `Content-Disposition: form-data` header with a `name` parameter, or:
     /// * the end of stream was reached before the header segment terminator `\r\n\r\n`, or:
     /// * the buffer for the headers exceeds a preset size.
+    ///
     /// This is a low-level call and is expected to be supplemented/replaced by a more ergonomic
     /// API once more design work has taken place.
     ///

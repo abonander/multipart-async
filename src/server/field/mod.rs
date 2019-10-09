@@ -1,4 +1,4 @@
-// Copyright 2017 `multipart-async` Crate Developers
+// Copyright 2017-2019 `multipart-async` Crate Developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
@@ -133,7 +133,7 @@ impl<'a, S: TryStream + 'a> FieldData<'a, S> {
     ///
     /// * a non-browser client like cURL was specifically instructed by the user to
     /// use a non-UTF-8 charset, or:
-    /// * the field is actually a file encoded in a charset that is not UTF-8
+    /// * the field is actually a text file encoded in a charset that is not UTF-8
     /// (most likely Windows-1252 or UTF-16).
     pub fn read_to_string(self) -> ReadToString<'a, S> {
         ReadToString {

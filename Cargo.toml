@@ -48,7 +48,6 @@ server = ["twoway", "httparse"]
 # Expose APIs used for fuzzing
 # Note: these APIs are not considered part of the public API and may break
 fuzzing = ["futures-util-preview", "futures-test-preview"]
-async-await = []
 
 [dev-dependencies]
 hyper = "0.13.0-alpha.1"

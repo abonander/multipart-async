@@ -1,3 +1,9 @@
+// Copyright 2017-2019 `multipart-async` Crate Developers
+//
+// Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
+// http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
+// http://opensource.org/licenses/MIT>, at your option. This file may not be
+// copied, modified, or distributed except according to those terms.
 //! The client-side abstraction for multipart requests. Enabled with the `client` feature (on by
 //! default).
 //!
@@ -7,9 +13,9 @@ use http::HeaderValue;
 use rand::distributions::{Alphanumeric, Distribution};
 use tokio_io::AsyncWrite;
 
-use crate::client::streaming::MultipartWriter;
+use crate::client::writer::MultipartWriter;
 
-pub mod streaming;
+pub mod writer;
 
 const BOUNDARY_LEN: usize = 32;
 
@@ -38,4 +44,13 @@ impl MultipartRequest {
     pub fn wrap_writer<W: AsyncWrite + Unpin>(self, writer: W) -> MultipartWriter<W> {
         MultipartWriter::new(writer, self.boundary)
     }
+}
+
+#[test]
+fn test_multipart_get_content_type() {
+    let request = MultipartRequest {
+        boundary: "boundary".to_string(),
+    };
+
+    assert_eq!(request.get_content_type(), "multipart/form-data; boundary=boundary");
 }
