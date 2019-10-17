@@ -169,6 +169,45 @@ where
         Err(Request::from_parts(parts, body))
     }
 
+    /// Get a future yielding the next field in the stream, if the stream is not at an end.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate futures;
+    /// use futures::prelude::*;
+    /// # use std::iter;
+    /// # use futures_test::task::noop_context;
+    /// # use std::convert::Infallible;
+    /// use multipart_async::server::Multipart;
+    /// use std::error::Error;
+    ///
+    /// async fn example() -> Result<(), Box<dyn Error>> {
+    /// #   let stream = stream::empty().map(Result::<&'static [u8], Infallible>::Ok);
+    ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
+    ///     let mut multipart = Multipart::with_body(stream, "boundary");
+    ///     while let Some(mut field) = multipart.next_field().await? {
+    ///         println!("field: {:?}", field.headers);
+    ///
+    ///         if field.headers.is_text() {
+    ///             println!("field text: {:?}", field.data.read_to_string().await?);
+    ///         } else {
+    ///             // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
+    ///             while let Some(chunk) = field.data.try_next().await? {
+    ///                 println!("field data chunk: {:?}", chunk);
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// # let ref mut cx = noop_context();
+    /// # let future = example();
+    /// # pin_mut!(future);
+    /// # while let futures::Poll::Pending = future.as_mut().poll(cx) {}
+    /// ```
+    pub fn next_field(&mut self) -> NextField<S> where Self: Unpin {
+        NextField::new(Pin::new(self))
+    }
+
     /// Poll for the next boundary, returning `true` if a field should follow that boundary,
     /// or `false` if the request is at an end. See above for the overall flow.
     ///
@@ -241,45 +280,6 @@ where
         } else {
             Poll::Ready(None)
         }
-    }
-
-    /// Get a future yielding the next field in the stream, if the stream is not at an end.
-    ///
-    /// ```rust
-    /// # #[macro_use] extern crate futures;
-    /// use futures::prelude::*;
-    /// # use std::iter;
-    /// # use futures_test::task::noop_context;
-    /// # use std::convert::Infallible;
-    /// use multipart_async::server::Multipart;
-    /// use std::error::Error;
-    ///
-    /// async fn example() -> Result<(), Box<dyn Error>> {
-    /// #   let stream = stream::empty().map(Result::<&'static [u8], Infallible>::Ok);
-    ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
-    ///     let mut multipart = Multipart::with_body(stream, "boundary");
-    ///     while let Some(mut field) = multipart.next_field().await? {
-    ///         println!("field: {:?}", field.headers);
-    ///
-    ///         if field.headers.is_text() {
-    ///             println!("field text: {:?}", field.data.read_to_string().await?);
-    ///         } else {
-    ///             // this gives us `Result<Option<&'static [u8]>>` so `?` works in this function
-    ///             while let Some(chunk) = field.data.try_next().await? {
-    ///                 println!("field data chunk: {:?}", chunk);
-    ///             }
-    ///         }
-    ///     }
-    ///
-    ///     Ok(())
-    /// }
-    /// # let ref mut cx = noop_context();
-    /// # let future = example();
-    /// # pin_mut!(future);
-    /// # while let futures::Poll::Pending = future.as_mut().poll(cx) {}
-    /// ```
-    pub fn next_field(&mut self) -> NextField<S> where Self: Unpin {
-        NextField::new(Pin::new(self))
     }
 }
 
