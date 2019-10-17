@@ -193,18 +193,23 @@ impl<S: TryStream + Unpin> Future for ReadToString<S>
                 surrogate[..start_len].copy_from_slice(&start[..start_len]);
                 surrogate[start_len..width].copy_from_slice(data.slice(..needed));
 
+                trace!("decoding surrogate: {:?}", &surrogate[..width]);
+
                 self.string.push_str(
                     str::from_utf8(&surrogate[..width])
                         .map_err(Utf8)?
                 );
 
-                let (_, rem) = data.split_into(width);
+                let (_, rem) = data.split_into(needed);
                 data = rem;
+                self.surrogate = None;
             }
 
             match str::from_utf8(data.as_slice()) {
                 Ok(s) => self.string.push_str(s),
                 Err(e) => if e.error_len().is_some() {
+                    trace!("ReadToString failed to decode; string: {:?}, surrogate: {:?}, data: {:?}",
+                           self.string, self.surrogate, data.as_slice());
                     // we encountered an invalid surrogate
                     return Ready(Err(Utf8(e)));
                 } else {
@@ -258,8 +263,11 @@ fn assert_types_unpin() {
 #[test]
 fn test_read_to_string() {
     use futures_util::TryFutureExt;
+    use crate::test_util::mock_stream;
 
-    let test_data = crate::test_util::mock_stream(&[
+    let _ = ::env_logger::try_init();
+
+    let test_data = mock_stream(&[
         b"Hello", b",", b" ", b"world!"
     ]);
 
@@ -268,5 +276,17 @@ fn test_read_to_string() {
     ready_assert_eq!(
         |cx| read_to_string.try_poll_unpin(cx),
         Ok("Hello, world!".to_string())
+    );
+
+    let test_data_unicode = mock_stream(&[
+        &[40, 226, 149], &[175, 194, 176, 226, 150], &[161, 194, 176, 41, 226, 149],
+        &[175, 239, 184, 181, 32], &[226, 148, 187, 226, 148, 129, 226, 148, 187]
+    ]);
+
+    let mut read_to_string = ReadToString::new(test_data_unicode);
+
+    ready_assert_eq!(
+        |cx| read_to_string.try_poll_unpin(cx),
+        Ok("(╯°□°)╯︵ ┻━┻".to_string())
     );
 }
