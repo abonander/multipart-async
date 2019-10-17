@@ -153,6 +153,7 @@ impl<S: TryStream> Stream for FieldData<'_, S>
     }
 }
 
+/// A `Future` that yields the body of a field read to a `String`.
 pub struct ReadToString<S: TryStream + Unpin> {
     stream: S,
     string: String,
@@ -160,7 +161,7 @@ pub struct ReadToString<S: TryStream + Unpin> {
 }
 
 impl<S: TryStream + Unpin> ReadToString<S> {
-    pub fn new(stream: S) -> Self {
+    pub(crate) fn new(stream: S) -> Self {
         ReadToString {
             stream,
             string: String::new(),
