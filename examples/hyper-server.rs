@@ -1,10 +1,10 @@
-use std::net::TcpStream;
-use hyper::{Body, Request, Response, Server, StatusCode};
+use httparse::Error::Status;
 use hyper::rt::{self, Future};
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server, StatusCode};
 use multipart_async::server::Multipart;
-use httparse::Error::Status;
+use std::net::TcpStream;
 
 use futures::{FutureExt, TryStreamExt};
 
@@ -17,14 +17,11 @@ async fn main() {
     let make_svc = make_service_fn(|socket: &AddrStream| {
         println!("\n\nrequest from: {}", socket.remote_addr());
 
-        async move {
-            Ok::<_, Error>(service_fn(handle_request))
-        }
+        async move { Ok::<_, Error>(service_fn(handle_request)) }
     });
 
     // Then bind and serve...
-    let server = Server::bind(&addr)
-        .serve(make_svc);
+    let server = Server::bind(&addr).serve(make_svc);
 
     println!("server running on {}", server.local_addr());
 
@@ -39,9 +36,9 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Error> {
             Ok(()) => Response::new(Body::from("successful request!")),
             Err(e) => Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(e.to_string()))?
-        }
-        Err(req) => Response::new(Body::from("expecting multipart/form-data"))
+                .body(Body::from(e.to_string()))?,
+        },
+        Err(req) => Response::new(Body::from("expecting multipart/form-data")),
     })
 }
 

@@ -22,11 +22,13 @@ use std::cmp;
 use crate::server::fuzzing::*;
 
 use crate::helpers::show_bytes;
-use crate::server::{PushChunk, Multipart};
+use crate::server::{Multipart, PushChunk};
 use std::convert::Infallible;
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
-pub fn chunk_fuzz_data<'d>(data: &'d [u8]) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
+pub fn chunk_fuzz_data<'d>(
+    data: &'d [u8],
+) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
     // this ensures the test boundary will always be split between chunks
     stream::iter(data.chunks(BOUNDARY.len() - 1))
         .map(Ok)
@@ -70,7 +72,7 @@ pub fn fuzz_boundary_finder(fuzz_data: &[u8]) {
                 Ready(Some(Ok(chunk))) => {
                     assert_ne!(chunk, &[]);
                     assert_eq!(twoway::find_bytes(chunk, BOUNDARY.as_bytes()), None)
-                },
+                }
                 Pending => (),
                 Ready(None) | Ready(Some(Err(_))) => return,
             }
@@ -81,7 +83,9 @@ pub fn fuzz_boundary_finder(fuzz_data: &[u8]) {
 /// Fuzz BoundaryFinder taking the input as the data of a field
 pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
     // ensure the boundary doesn't appear in the input data
-    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() { return; }
+    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() {
+        return;
+    }
 
     let start = format!("{}\r\n", BOUNDARY);
     let end = format!("\r\n{}--", BOUNDARY);
@@ -96,9 +100,7 @@ pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
 
     loop {
         match finder.as_mut().consume_boundary(cx) {
-            Ready(Ok(true)) => {
-                break
-            },
+            Ready(Ok(true)) => break,
             Ready(Ok(false)) => panic!("failed to read starting boundary"),
             // errors mean we handled the problem correctly
             Ready(Err(_)) => return,
@@ -115,24 +117,23 @@ pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
                 assert!(
                     remaining.starts_with(chunk),
                     "expected chunk \"{}\" to be a prefix of remaining data \"{}\"",
-                    show_bytes(chunk), show_bytes(remaining)
+                    show_bytes(chunk),
+                    show_bytes(remaining)
                 );
                 remaining = &remaining[chunk.len()..];
-            },
+            }
             Ready(Some(Err(_))) => return,
             Ready(None) => {
                 assert_eq!(remaining, &[]);
                 break;
-            },
+            }
             Pending => (),
         }
     }
 
     loop {
         match finder.as_mut().consume_boundary(cx) {
-            Ready(Ok(false)) => {
-                break
-            },
+            Ready(Ok(false)) => break,
             Ready(Ok(true)) => panic!("didn't find ending boundary"),
             Ready(Err(_)) => return,
             Pending => (),
@@ -141,7 +142,9 @@ pub fn fuzz_boundary_finder_field(fuzz_data: &[u8]) {
 }
 
 pub fn fuzz_read_headers(fuzz_data: &[u8]) {
-    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() { return }
+    if twoway::find_bytes(fuzz_data, BOUNDARY.as_bytes()).is_some() {
+        return;
+    }
 
     let finder = PushChunk::new(BoundaryFinder::new(chunk_fuzz_data(fuzz_data), BOUNDARY));
     pin_mut!(finder);
@@ -149,7 +152,7 @@ pub fn fuzz_read_headers(fuzz_data: &[u8]) {
     let ref mut cx = noop_context();
     let mut read_headers = ReadHeaders::default();
 
-    while let Pending = read_headers.read_headers(finder.as_mut(), cx) { }
+    while let Pending = read_headers.read_headers(finder.as_mut(), cx) {}
 }
 
 #[test]

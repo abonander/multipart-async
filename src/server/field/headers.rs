@@ -13,12 +13,12 @@ use futures_core::stream::{Stream, TryStream};
 use futures_core::task::Context;
 
 use http::header::{HeaderMap, HeaderName, HeaderValue};
-use httparse::{EMPTY_HEADER, Status};
+use httparse::{Status, EMPTY_HEADER};
 use mime::{self, Mime, Name};
 
-use crate::BodyChunk;
 use crate::server::helpers::*;
 use crate::server::{Error, PushChunk};
+use crate::BodyChunk;
 use http::Response;
 
 const MAX_BUF_LEN: usize = 1024;
@@ -125,8 +125,7 @@ impl ReadHeaders {
 
                 if !self.accumulator.is_empty() {
                     self.accumulator.extend_from_slice(headers.as_slice());
-                    let headers = parse_headers(&self.accumulator)
-                        .map_err(map_err)?;
+                    let headers = parse_headers(&self.accumulator).map_err(map_err)?;
                     self.accumulator.clear();
 
                     return ready_ok(headers);
@@ -192,12 +191,16 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
 
     let headers = match httparse::parse_headers(bytes, &mut header_buf) {
         Ok(Status::Complete((_, headers))) => headers,
-        Ok(Status::Partial) => return Err(format!("field headers incomplete: {}", show_bytes(bytes))),
-        Err(e) => return Err(format!(
-            "error parsing headers: {}; from buffer: {}",
-            e,
-            show_bytes(bytes)
-        )),
+        Ok(Status::Partial) => {
+            return Err(format!("field headers incomplete: {}", show_bytes(bytes)))
+        }
+        Err(e) => {
+            return Err(format!(
+                "error parsing headers: {}; from buffer: {}",
+                e,
+                show_bytes(bytes)
+            ))
+        }
     };
 
     trace!("parsed headers: {:?}", headers);
@@ -218,7 +221,7 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
             let str_val = str::from_utf8(header.value)
                 .map_err(|_| {
                     "multipart `Content-Disposition` header values \
-                         must be UTF-8 encoded"
+                     must be UTF-8 encoded"
                 })?
                 .trim();
 
@@ -234,7 +237,7 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
             let str_val = str::from_utf8(header.value)
                 .map_err(|_| {
                     "multipart `Content-Type` header values \
-                         must be UTF-8 encoded"
+                     must be UTF-8 encoded"
                 })?
                 .trim();
 
@@ -274,7 +277,9 @@ fn parse_headers(bytes: &[u8]) -> Result<FieldHeaders, String> {
             ));
         }
 
-        return Err(format!("missing `Content-Disposition` header on a field in this multipart request"));
+        return Err(format!(
+            "missing `Content-Disposition` header on a field in this multipart request"
+        ));
     }
 
     if dupe_cont_type {
@@ -587,14 +592,20 @@ fn test_parse_headers_errors() {
 fn test_read_headers() {
     use crate::test_util::mock_stream;
     let stream = PushChunk::new(mock_stream(&[
-        b"Content-Disposition", b": ", b"form-data;", b" name = ", b"foo", b"\r\n", b"\r\n"
+        b"Content-Disposition",
+        b": ",
+        b"form-data;",
+        b" name = ",
+        b"foo",
+        b"\r\n",
+        b"\r\n",
     ]));
     pin_mut!(stream);
 
     let mut read_headers = ReadHeaders::default();
 
-    let headers: FieldHeaders = until_ready!(|cx| read_headers.read_headers(stream.as_mut(), cx))
-        .unwrap();
+    let headers: FieldHeaders =
+        until_ready!(|cx| read_headers.read_headers(stream.as_mut(), cx)).unwrap();
 
     assert_eq!(headers.name, "foo");
     assert_eq!(headers.content_type, None);

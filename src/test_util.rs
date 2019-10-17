@@ -12,7 +12,7 @@ use std::task::Poll::*;
 use std::thread;
 use std::time::Duration;
 
-use futures_core::stream::{TryStream, Stream};
+use futures_core::stream::{Stream, TryStream};
 use futures_core::task::Context;
 
 use futures_test::stream::StreamTestExt;
@@ -24,17 +24,23 @@ use std::convert::Infallible;
 pub const BOUNDARY: &str = "--boundary";
 
 pub const TEST_SINGLE_FIELD: &[&[u8]] = &[
-    b"--boundary\r", b"\n",
+    b"--boundary\r",
+    b"\n",
     b"Content-Disposition:",
     b" form-data; name=",
     b"\"foo\"",
     b"\r\n\r\n",
     b"field data",
-    b"\r", b"\n--boundary--"
+    b"\r",
+    b"\n--boundary--",
 ];
 
-pub fn mock_stream<'d>(test_data: &'d [&'d [u8]]) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
-    stream::iter(test_data.iter().cloned()).map(Ok).interleave_pending()
+pub fn mock_stream<'d>(
+    test_data: &'d [&'d [u8]],
+) -> impl Stream<Item = Result<&'d [u8], Infallible>> + 'd {
+    stream::iter(test_data.iter().cloned())
+        .map(Ok)
+        .interleave_pending()
 }
 
 macro_rules! until_ready(
@@ -82,9 +88,12 @@ macro_rules! ready_assert(
     }}
 );
 
-pub fn run_future_hot<F>(f: F) -> F::Output where F: Future {
+pub fn run_future_hot<F>(f: F) -> F::Output
+where
+    F: Future,
+{
     pin_mut!(f);
     until_ready!(|cx| f.as_mut().poll(cx))
 }
 
-pub fn assert_unpin<T: Unpin>() { }
+pub fn assert_unpin<T: Unpin>() {}

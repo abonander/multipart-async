@@ -24,18 +24,26 @@ pub struct MultipartWriter<W> {
 }
 
 impl<W> MultipartWriter<W> {
-    pub (crate) fn new(inner: W, boundary: String) -> Self {
+    pub(crate) fn new(inner: W, boundary: String) -> Self {
         MultipartWriter {
             inner,
             boundary,
-            data_written: false
+            data_written: false,
         }
     }
 
-    fn get_field_header(&self, name: &str, filename: Option<&str>, content_type: Option<&Mime>) -> String {
+    fn get_field_header(
+        &self,
+        name: &str,
+        filename: Option<&str>,
+        content_type: Option<&Mime>,
+    ) -> String {
         use std::fmt::Write;
 
-        let mut header = format!("--{}\r\nContent-Disposition: form-data; name=\"{}\"", self.boundary, name);
+        let mut header = format!(
+            "--{}\r\nContent-Disposition: form-data; name=\"{}\"",
+            self.boundary, name
+        );
 
         if let Some(filename) = filename {
             write!(header, "; filename=\"{}\"", filename).unwrap();
@@ -64,7 +72,12 @@ impl<W> MultipartWriter<W> {
 }
 
 impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
-    async fn write_field_header(&mut self, name: &str, filename: Option<&str>, content_type: Option<&Mime>) -> io::Result<()> {
+    async fn write_field_header(
+        &mut self,
+        name: &str,
+        filename: Option<&str>,
+        content_type: Option<&Mime>,
+    ) -> io::Result<()> {
         let mut header = Cursor::new(self.get_field_header(name, filename, content_type));
         header.copy(&mut self.inner).await?;
         self.data_written = true;
@@ -87,8 +100,15 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// pass a `content_type` of `mime::APPLICATION_OCTET_STREAM`.
     ///
     /// [7578-4.4]: https://tools.ietf.org/html/rfc7578#section-4.4
-    pub async fn write_field<R: AsyncRead + Unpin>(&mut self, name: &str, filename: Option<&str>, content_type: Option<&Mime>, mut contents: R) -> io::Result<&mut Self> {
-        self.write_field_header(name, filename, content_type).await?;
+    pub async fn write_field<R: AsyncRead + Unpin>(
+        &mut self,
+        name: &str,
+        filename: Option<&str>,
+        content_type: Option<&Mime>,
+        mut contents: R,
+    ) -> io::Result<&mut Self> {
+        self.write_field_header(name, filename, content_type)
+            .await?;
         contents.copy(&mut self.inner).await?;
         self.inner.write_all(b"\r\n").await?;
         Ok(self)
@@ -98,8 +118,18 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// See that method for details on these parameters.
     ///
     /// Errors from the stream will be wrapped as `io::ErrorKind::Other`.
-    pub async fn write_stream<B, E, S>(&mut self, name: &str, filename: Option<&str>, content_type: Option<&Mime>, mut contents: S) -> io::Result<&mut Self>
-    where B: AsRef<[u8]>, E: Into<Box<dyn Error + Send + Sync>>, S: Stream<Item = Result<B, E>> + Unpin {
+    pub async fn write_stream<B, E, S>(
+        &mut self,
+        name: &str,
+        filename: Option<&str>,
+        content_type: Option<&Mime>,
+        mut contents: S,
+    ) -> io::Result<&mut Self>
+    where
+        B: AsRef<[u8]>,
+        E: Into<Box<dyn Error + Send + Sync>>,
+        S: Stream<Item = Result<B, E>> + Unpin,
+    {
         let mut contents = contents.map_err(|e| io::Error::new(io::ErrorKind::Other, e));
 
         while let Some(buf) = contents.try_next().await? {
@@ -119,7 +149,11 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// If you want to override the filename or content-type, use
     /// [`.write_field()`](#method.write_field) instead.
     #[cfg(feature = "tokio-fs")]
-    pub async fn write_file<P: AsRef<Path>>(&mut self, name: &str, path: P) -> io::Result<&mut Self> {
+    pub async fn write_file<P: AsRef<Path>>(
+        &mut self,
+        name: &str,
+        path: P,
+    ) -> io::Result<&mut Self> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|s| s.to_str());
         let content_type = mime_guess::from_path(path).first_or_octet_stream();
@@ -171,8 +205,7 @@ async fn test_multipart_writer_one_text_field() -> io::Result<()> {
         data_written: false,
     };
 
-    writer.write_text("hello", "world!").await?
-        .finish().await?;
+    writer.write_text("hello", "world!").await?.finish().await?;
 
     assert_eq!(
         writer.inner,

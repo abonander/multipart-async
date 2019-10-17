@@ -27,17 +27,20 @@ impl MultipartRequest {
     /// Start building a new `multipart/form-data` request.
     pub fn new() -> Self {
         let mut boundary = String::with_capacity(BOUNDARY_LEN);
-        boundary.extend(Alphanumeric.sample_iter(rand::thread_rng()).take(BOUNDARY_LEN));
+        boundary.extend(
+            Alphanumeric
+                .sample_iter(rand::thread_rng())
+                .take(BOUNDARY_LEN),
+        );
 
-        MultipartRequest {
-            boundary
-        }
+        MultipartRequest { boundary }
     }
 
     /// Get the value of the `Content-Type` header to be sent to the server.
     pub fn get_content_type(&self) -> HeaderValue {
         format!("multipart/form-data; boundary={}", self.boundary)
-            .parse().expect("this should be a valid header value")
+            .parse()
+            .expect("this should be a valid header value")
     }
 
     /// Wrap a `AsyncWrite` impl.
@@ -52,5 +55,8 @@ fn test_multipart_get_content_type() {
         boundary: "boundary".to_string(),
     };
 
-    assert_eq!(request.get_content_type(), "multipart/form-data; boundary=boundary");
+    assert_eq!(
+        request.get_content_type(),
+        "multipart/form-data; boundary=boundary"
+    );
 }

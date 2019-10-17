@@ -14,19 +14,19 @@
 use std::fmt;
 use std::pin::Pin;
 
-use futures_core::{Future, Poll, Stream};
 use futures_core::task::{self, Context};
+use futures_core::{Future, Poll, Stream};
 use http::{Method, Request};
 use mime::Mime;
 
-use crate::BodyChunk;
 use self::helpers::*;
+use crate::BodyChunk;
 
 use self::boundary::BoundaryFinder;
-pub use self::field::{Field, FieldData, FieldHeaders, NextField, ReadToString};
 use self::field::ReadHeaders;
-use std::convert::Infallible;
+pub use self::field::{Field, FieldData, FieldHeaders, NextField, ReadToString};
 use std::borrow::Cow;
+use std::convert::Infallible;
 use std::str::Utf8Error;
 
 mod helpers;
@@ -148,11 +148,15 @@ where
     pub fn try_from_request(req: Request<S>) -> std::result::Result<Self, Request<S>> {
         fn get_boundary(parts: &http::request::Parts) -> Option<String> {
             Some(
-                parts.headers.get(http::header::CONTENT_TYPE)?
-                    .to_str().ok()?
-                    .parse::<Mime>().ok()?
+                parts
+                    .headers
+                    .get(http::header::CONTENT_TYPE)?
+                    .to_str()
+                    .ok()?
+                    .parse::<Mime>()
+                    .ok()?
                     .get_param(mime::BOUNDARY)?
-                    .to_string()
+                    .to_string(),
             )
         }
 
@@ -163,7 +167,7 @@ where
         let (parts, body) = req.into_parts();
 
         if let Some(boundary) = get_boundary(&parts) {
-            return Ok(Self::with_body(body, boundary))
+            return Ok(Self::with_body(body, boundary));
         }
 
         Err(Request::from_parts(parts, body))
@@ -180,9 +184,9 @@ where
     /// use multipart_async::server::Multipart;
     /// use std::error::Error;
     ///
-    /// async fn example() -> Result<(), Box<dyn Error>> {
-    /// #   let stream = stream::empty().map(Result::<&'static [u8], Infallible>::Ok);
-    ///     // let stream = impl Stream<Item = Result<&'static [u8], _>>;
+    /// async fn example<S>(stream: S) -> Result<(), Box<dyn Error>>
+    ///         where S: TryStream<Ok = &'static [u8]> + Unpin, S::Error: Error + 'static
+    /// {
     ///     let mut multipart = Multipart::with_body(stream, "boundary");
     ///     while let Some(mut field) = multipart.next_field().await? {
     ///         println!("field: {:?}", field.headers);
@@ -199,12 +203,16 @@ where
     ///
     ///     Ok(())
     /// }
+    /// # let stream = stream::empty().map(Result::<&'static [u8], Infallible>::Ok);
     /// # let ref mut cx = noop_context();
-    /// # let future = example();
+    /// # let future = example(stream);
     /// # pin_mut!(future);
     /// # while let futures::Poll::Pending = future.as_mut().poll(cx) {}
     /// ```
-    pub fn next_field(&mut self) -> NextField<S> where Self: Unpin {
+    pub fn next_field(&mut self) -> NextField<S>
+    where
+        Self: Unpin,
+    {
         NextField::new(Pin::new(self))
     }
 
@@ -252,7 +260,8 @@ where
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
             this.read_hdr
-                .read_headers(Pin::new_unchecked(&mut this.inner), cx)?.map(Ok)
+                .read_headers(Pin::new_unchecked(&mut this.inner), cx)?
+                .map(Ok)
         }
     }
 
@@ -274,7 +283,10 @@ where
     ///
     /// If you do want to inspect the raw field headers, they are separated by one CRLF (`\r\n`) and
     /// terminated by two CRLFs (`\r\n\r\n`) after which the field chunks follow.
-    pub fn poll_field_chunk(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<self::Result<S::Ok, S::Error>>> {
+    pub fn poll_field_chunk(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<self::Result<S::Ok, S::Error>>> {
         if !self.read_hdr.is_reading_headers() {
             self.inner().poll_next(cx)
         } else {
@@ -317,7 +329,7 @@ impl<E> From<Error<Error<E>>> for Error<E> {
         match inner {
             Parsing(parsing) | Stream(Parsing(parsing)) => Parsing(parsing),
             Utf8(e) | Stream(Utf8(e)) => Utf8(e),
-            Stream(Stream(e)) => Stream(e)
+            Stream(Stream(e)) => Stream(e),
         }
     }
 }
@@ -368,7 +380,10 @@ impl<S, T> PushChunk<S, T> {
     }
 }
 
-impl<S: TryStream> PushChunk<S, S::Ok> where S::Ok: BodyChunk {
+impl<S: TryStream> PushChunk<S, S::Ok>
+where
+    S::Ok: BodyChunk,
+{
     fn push_chunk(mut self: Pin<&mut Self>, chunk: S::Ok) {
         if let Some(pushed) = self.as_mut().pushed() {
             debug_panic!(
@@ -409,10 +424,7 @@ mod test {
     #[test]
     fn test_empty_body() {
         let _ = ::env_logger::try_init();
-        let multipart = Multipart::with_body(
-            mock_stream(&[]),
-            BOUNDARY
-        );
+        let multipart = Multipart::with_body(mock_stream(&[]), BOUNDARY);
         pin_mut!(multipart);
         ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(false));
     }
@@ -422,7 +434,7 @@ mod test {
         let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
             mock_stream(&[b"--boundary", b"\r\n", b"\r\n", b"--boundary--"]),
-            BOUNDARY
+            BOUNDARY,
         );
         pin_mut!(multipart);
         ready_assert_eq!(|cx| multipart.as_mut().poll_has_next_field(cx), Ok(true));
@@ -435,15 +447,17 @@ mod test {
         let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
             mock_stream(&[
-                b"--boundary\r", b"\n",
+                b"--boundary\r",
+                b"\n",
                 b"Content-Disposition:",
                 b" form-data; name=",
                 b"\"foo\"",
                 b"\r\n\r\n",
                 b"field data",
-                b"\r", b"\n--boundary--"
+                b"\r",
+                b"\n--boundary--",
             ]),
-            BOUNDARY
+            BOUNDARY,
         );
         pin_mut!(multipart);
 
@@ -474,20 +488,30 @@ mod test {
         let _ = ::env_logger::try_init();
         let multipart = Multipart::with_body(
             mock_stream(&[
-                b"--boundary\r", b"\n",
+                b"--boundary\r",
+                b"\n",
                 b"Content-Disposition:",
                 b" form-data; name=",
                 b"\"foo\"",
                 b"\r\n\r\n",
                 b"field data",
-                b"\r", b"\n--boundary\r\n",
-                b"Content-Disposition: form-data; name=", b"foo-", b"data",
-                b"; filename=", b"\"foo.txt\"", b"\r\n",
-                b"Content-Type: ", b"text/plain; charset", b"=utf-8", b"\r\n", b"\r\n",
+                b"\r",
+                b"\n--boundary\r\n",
+                b"Content-Disposition: form-data; name=",
+                b"foo-",
+                b"data",
+                b"; filename=",
+                b"\"foo.txt\"",
+                b"\r\n",
+                b"Content-Type: ",
+                b"text/plain; charset",
+                b"=utf-8",
+                b"\r\n",
+                b"\r\n",
                 b"field data--2\r\n--data--field",
-                b"\r\n--boundary--"
+                b"\r\n--boundary--",
             ]),
-            BOUNDARY
+            BOUNDARY,
         );
         pin_mut!(multipart);
 

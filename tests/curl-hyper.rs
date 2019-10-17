@@ -2,16 +2,16 @@
 use std::error::Error;
 use std::net::SocketAddr;
 
-use http::{Method, HeaderMap, StatusCode, Request};
-use hyper::{Response, Server, Body};
+use http::{HeaderMap, Method, Request, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Response, Server};
 
 use futures::{future, FutureExt, StreamExt, TryStreamExt};
 
+use curl::easy::{Easy2, Form, Handler, ReadError, WriteError};
 use multipart_async::server::Multipart;
-use curl::easy::{Handler, Easy2, WriteError, Form, ReadError};
-use std::thread;
 use std::ops::Range;
+use std::thread;
 
 struct TestHandler;
 
@@ -61,8 +61,10 @@ async fn test_hyper_with_curl() {
                             assert!(field.headers.is_text());
                             assert_eq!(field.headers.content_type, Some(mime::TEXT_PLAIN));
                             assert_eq!(field.headers.ext_headers, HeaderMap::new());
-                            assert_eq!(field.data.read_to_string().await.unwrap(),
-                                       "Hello, world from a text file!");
+                            assert_eq!(
+                                field.data.read_to_string().await.unwrap(),
+                                "Hello, world from a text file!"
+                            );
                         }
                         "binary-field" => {
                             assert!(!binary_done);
@@ -70,7 +72,10 @@ async fn test_hyper_with_curl() {
 
                             assert_eq!(field.headers.filename, Some("binary-file.bin".to_string()));
                             assert!(!field.headers.is_text());
-                            assert_eq!(field.headers.content_type, Some(mime::APPLICATION_OCTET_STREAM));
+                            assert_eq!(
+                                field.headers.content_type,
+                                Some(mime::APPLICATION_OCTET_STREAM)
+                            );
                             assert_eq!(field.headers.ext_headers, HeaderMap::new());
 
                             let mut data = 0u8..=255;
@@ -93,7 +98,9 @@ async fn test_hyper_with_curl() {
 
                 tx.try_send(()).unwrap();
 
-                Response::builder().status(StatusCode::OK).body(Body::empty())
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::empty())
             }
         }))
     });
@@ -104,26 +111,35 @@ async fn test_hyper_with_curl() {
 
     thread::spawn(move || {
         let mut form = Form::new();
-        form.part("normal").contents("Hello, world!".as_bytes()).add().unwrap();
+        form.part("normal")
+            .contents("Hello, world!".as_bytes())
+            .add()
+            .unwrap();
         form.part("text-field")
             .buffer("text-file.txt", "Hello, world from a text file!".into())
             .content_type("text/plain")
-            .add().unwrap();
+            .add()
+            .unwrap();
 
         let contents = (0..=255).collect::<Vec<u8>>();
 
         form.part("binary-field")
             .buffer("binary-file.bin", contents)
             .content_type("application/octet-stream")
-            .add().unwrap();
+            .add()
+            .unwrap();
 
         let mut easy = Easy2::new(TestHandler);
-        easy.url(&format!("http://{}/multipart-upload", bind_addr)).unwrap();
+        easy.url(&format!("http://{}/multipart-upload", bind_addr))
+            .unwrap();
         easy.post(true).unwrap();
         easy.httppost(form).unwrap();
 
         easy.perform().unwrap();
     });
 
-    server.with_graceful_shutdown(rx.next().map(|res| ())).await.unwrap()
+    server
+        .with_graceful_shutdown(rx.next().map(|res| ()))
+        .await
+        .unwrap()
 }

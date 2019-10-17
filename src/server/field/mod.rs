@@ -5,19 +5,19 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-use std::{mem, str};
 use std::fmt;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::Poll::*;
+use std::{mem, str};
 
 use futures_core::{Future, Poll, Stream, TryStream};
 //pub use self::collect::{ReadTextField, TextField};
 use futures_core::task::Context;
 
-use crate::BodyChunk;
-use crate::server::{Error, PushChunk};
 use crate::server::Error::Utf8;
+use crate::server::{Error, PushChunk};
+use crate::BodyChunk;
 
 use super::boundary::BoundaryFinder;
 use super::Multipart;
@@ -52,7 +52,12 @@ impl<'a, S: TryStream + 'a> NextField<'a, S> {
     }
 }
 
-impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk, Error<S::Error>: From<S::Error> {
+impl<'a, S: 'a> Future for NextField<'a, S>
+where
+    S: TryStream,
+    S::Ok: BodyChunk,
+    Error<S::Error>: From<S::Error>,
+{
     type Output = super::Result<Option<Field<'a, S>>, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -71,12 +76,12 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
                 } else {
                     return Ready(Ok(None));
                 }
-            }
+            };
         }
 
         // `false` and `multipart = Some` means we haven't polled for next field yet
-        self.has_next_field = self.has_next_field
-            || ready!(multipart!(get).poll_has_next_field(cx)?);
+        self.has_next_field =
+            self.has_next_field || ready!(multipart!(get).poll_has_next_field(cx)?);
 
         if !self.has_next_field {
             // end of stream, next `?` will return
@@ -86,7 +91,7 @@ impl<'a, S: 'a> Future for NextField<'a, S> where S: TryStream, S::Ok: BodyChunk
         Ready(Ok(Some(Field {
             headers: ready!(multipart!(get).poll_field_headers(cx)?),
             data: FieldData {
-                multipart: multipart!(take)
+                multipart: multipart!(take),
             },
             _priv: (),
         })))
@@ -122,8 +127,10 @@ pub struct FieldData<'a, S: TryStream + 'a> {
 }
 
 impl<S: TryStream> FieldData<'_, S>
-    where S::Ok: BodyChunk,
-          Error<S::Error>: From<S::Error> {
+where
+    S::Ok: BodyChunk,
+    Error<S::Error>: From<S::Error>,
+{
     /// Return a `Future` which yields the result of reading this field's data to a `String`.
     ///
     /// ### Note: UTF-8 Only
@@ -142,9 +149,9 @@ impl<S: TryStream> FieldData<'_, S>
 }
 
 impl<S: TryStream> Stream for FieldData<'_, S>
-    where
-        S::Ok: BodyChunk,
-        Error<S::Error>: From<S::Error>
+where
+    S::Ok: BodyChunk,
+    Error<S::Error>: From<S::Error>,
 {
     type Item = super::Result<S::Ok, S::Error>;
 
@@ -171,23 +178,33 @@ impl<S: TryStream + Unpin> ReadToString<S> {
 }
 
 impl<S: TryStream + Unpin> Future for ReadToString<S>
-    where
-        S::Ok: BodyChunk,
-        Error<S::Error>: From<S::Error>
+where
+    S::Ok: BodyChunk,
+    Error<S::Error>: From<S::Error>,
 {
     type Output = super::Result<String, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         while let Some(mut data) = ready!(self.stream.try_poll_next_unpin(cx)?) {
             if let Some((start, start_len)) = self.surrogate {
-                assert!(start_len > 0 && start_len < 4, "start_len out of range: {:?}", start_len);
+                assert!(
+                    start_len > 0 && start_len < 4,
+                    "start_len out of range: {:?}",
+                    start_len
+                );
 
                 let start_len = start_len as usize;
 
                 let (width, needed) = if let Some(width) = utf8_char_width(start[0]) {
-                    (width, width.checked_sub(start_len).expect("start_len >= width"))
+                    (
+                        width,
+                        width.checked_sub(start_len).expect("start_len >= width"),
+                    )
                 } else {
-                    return Ready(fmt_err!("unexpected start of UTF-8 surrogate: {:X}", start[0]));
+                    return Ready(fmt_err!(
+                        "unexpected start of UTF-8 surrogate: {:X}",
+                        start[0]
+                    ));
                 };
 
                 let mut surrogate = [0u8; 4];
@@ -196,10 +213,8 @@ impl<S: TryStream + Unpin> Future for ReadToString<S>
 
                 trace!("decoding surrogate: {:?}", &surrogate[..width]);
 
-                self.string.push_str(
-                    str::from_utf8(&surrogate[..width])
-                        .map_err(Utf8)?
-                );
+                self.string
+                    .push_str(str::from_utf8(&surrogate[..width]).map_err(Utf8)?);
 
                 let (_, rem) = data.split_into(needed);
                 data = rem;
@@ -208,23 +223,25 @@ impl<S: TryStream + Unpin> Future for ReadToString<S>
 
             match str::from_utf8(data.as_slice()) {
                 Ok(s) => self.string.push_str(s),
-                Err(e) => if e.error_len().is_some() {
-                    trace!("ReadToString failed to decode; string: {:?}, surrogate: {:?}, data: {:?}",
+                Err(e) => {
+                    if e.error_len().is_some() {
+                        trace!("ReadToString failed to decode; string: {:?}, surrogate: {:?}, data: {:?}",
                            self.string, self.surrogate, data.as_slice());
-                    // we encountered an invalid surrogate
-                    return Ready(Err(Utf8(e)));
-                } else {
-                    self.string.push_str(unsafe {
-                        // Utf8Error specifies that `..e.valid_up_to()` is valid UTF-8
-                        str::from_utf8_unchecked(data.slice(..e.valid_up_to()))
-                    });
+                        // we encountered an invalid surrogate
+                        return Ready(Err(Utf8(e)));
+                    } else {
+                        self.string.push_str(unsafe {
+                            // Utf8Error specifies that `..e.valid_up_to()` is valid UTF-8
+                            str::from_utf8_unchecked(data.slice(..e.valid_up_to()))
+                        });
 
-                    let start_len = data.len() - e.valid_up_to();
-                    let mut start = [0u8; 3];
-                    start[..start_len].copy_from_slice(data.slice(e.valid_up_to()..));
+                        let start_len = data.len() - e.valid_up_to();
+                        let mut start = [0u8; 3];
+                        start[..start_len].copy_from_slice(data.slice(e.valid_up_to()..));
 
-                    // `e.valid_up_to()` is specified to be `[-1, -3]` of `data.len()`
-                    self.surrogate = Some((start, start_len as u8));
+                        // `e.valid_up_to()` is specified to be `[-1, -3]` of `data.len()`
+                        self.surrogate = Some((start, start_len as u8));
+                    }
                 }
             }
         }
@@ -246,7 +263,7 @@ fn utf8_char_width(first: u8) -> Option<usize> {
         0xC2..=0xDF => Some(2),
         0xE0..=0xEF => Some(3),
         0xF0..=0xF4 => Some(4),
-        _ => None
+        _ => None,
     }
 }
 
@@ -263,14 +280,12 @@ fn assert_types_unpin() {
 
 #[test]
 fn test_read_to_string() {
-    use futures_util::TryFutureExt;
     use crate::test_util::mock_stream;
+    use futures_util::TryFutureExt;
 
     let _ = ::env_logger::try_init();
 
-    let test_data = mock_stream(&[
-        b"Hello", b",", b" ", b"world!"
-    ]);
+    let test_data = mock_stream(&[b"Hello", b",", b" ", b"world!"]);
 
     let mut read_to_string = ReadToString::new(test_data);
 
@@ -280,8 +295,11 @@ fn test_read_to_string() {
     );
 
     let test_data_unicode = mock_stream(&[
-        &[40, 226, 149], &[175, 194, 176, 226, 150], &[161, 194, 176, 41, 226, 149],
-        &[175, 239, 184, 181, 32], &[226, 148, 187, 226, 148, 129, 226, 148, 187]
+        &[40, 226, 149],
+        &[175, 194, 176, 226, 150],
+        &[161, 194, 176, 41, 226, 149],
+        &[175, 239, 184, 181, 32],
+        &[226, 148, 187, 226, 148, 129, 226, 148, 187],
     ]);
 
     let mut read_to_string = ReadToString::new(test_data_unicode);

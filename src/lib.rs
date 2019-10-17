@@ -36,13 +36,13 @@ pub extern crate http;
 #[macro_use]
 extern crate lazy_static;
 
+use bytes::Bytes;
 use futures_core::{Future, Stream};
 use std::borrow::Cow;
 use std::process::Output;
-use std::str::Utf8Error;
-use std::{io, ops, fmt};
-use bytes::Bytes;
 use std::slice::SliceIndex;
+use std::str::Utf8Error;
+use std::{fmt, io, ops};
 
 mod helpers;
 
@@ -76,7 +76,10 @@ pub trait BodyChunk: Sized {
 
     /// Slice the bytes in `self` according to the given range.
     #[inline(always)]
-    fn slice<R>(&self, range: R) -> &R::Output where R: SliceIndex<[u8]> {
+    fn slice<R>(&self, range: R) -> &R::Output
+    where
+        R: SliceIndex<[u8]>,
+    {
         &self.as_slice()[range]
     }
 
