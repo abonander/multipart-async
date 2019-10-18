@@ -175,6 +175,8 @@ where
 
     /// Get a future yielding the next field in the stream, if the stream is not at an end.
     ///
+    /// If a field was previously being read, its contents will be discarded.
+    ///
     /// ```rust
     /// # #[macro_use] extern crate futures;
     /// use futures::prelude::*;
@@ -221,6 +223,8 @@ where
     ///
     /// If this returns `Ready(Ok(true))`, you may then begin
     /// [polling for the headers of the next field](#method.poll_field_headers).
+    ///
+    /// If a field was being read, its contents will be discarded.
     ///
     /// This is a low-level call and is expected to be supplemented/replaced by a more ergonomic
     /// API once more design work has taken place.

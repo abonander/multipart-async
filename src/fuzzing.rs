@@ -22,7 +22,7 @@ use std::cmp;
 use crate::server::fuzzing::*;
 
 use crate::helpers::show_bytes;
-use crate::server::{Multipart, PushChunk};
+use crate::server::{Multipart, PushChunk, ReadToString};
 use std::convert::Infallible;
 
 /// Deterministically chunk test data so the fuzzer can discover new code paths
@@ -155,6 +155,14 @@ pub fn fuzz_read_headers(fuzz_data: &[u8]) {
     while let Pending = read_headers.read_headers(finder.as_mut(), cx) {}
 }
 
+pub fn fuzz_read_to_string(fuzz_data: &[u8]) {
+    let stream = chunk_fuzz_data(fuzz_data);
+    let mut read_to_string = ReadToString::new(stream);
+
+    let ref mut cx = noop_context();
+    while let Pending = read_to_string.poll_unpin(cx) {}
+}
+
 #[test]
 fn test_fuzz_boundary_finder() {
     let _ = env_logger::try_init();
@@ -174,4 +182,11 @@ fn test_fuzz_read_headers() {
     let _ = env_logger::try_init();
     fuzz_read_headers(b"");
     fuzz_read_headers(b"Content-Disposition: multipart/form-data; name=foo");
+}
+
+#[test]
+fn test_fuzz_read_to_string() {
+    let _ = env_logger::try_init();
+    fuzz_read_to_string(b"Hello, world!");
+    fuzz_read_to_string("(╯°□°)╯︵ ┻━┻".as_bytes());
 }

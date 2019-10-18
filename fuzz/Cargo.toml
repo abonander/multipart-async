@@ -12,3 +12,6 @@ multipart-async = { path = "../", features = ["server", "fuzzing"] }
 
 [workspace]
 members = ["."]
+
+[package.metadata]
+cargo-fuzz = true
