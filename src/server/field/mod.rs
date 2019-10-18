@@ -186,7 +186,7 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         while let Some(mut data) = ready!(self.stream.try_poll_next_unpin(cx)?) {
-            if let Some((start, start_len)) = self.surrogate {
+            if let Some((mut start, start_len)) = self.surrogate {
                 assert!(
                     start_len > 0 && start_len < 4,
                     "start_len out of range: {:?}",
@@ -206,6 +206,12 @@ where
                         start[0]
                     ));
                 };
+
+                if data.len() < needed {
+                    start[start_len..start_len + data.len()].copy_from_slice(data.slice(..));
+                    self.surrogate = Some((start, (start_len + data.len()) as u8));
+                    continue;
+                }
 
                 let mut surrogate = [0u8; 4];
                 surrogate[..start_len].copy_from_slice(&start[..start_len]);

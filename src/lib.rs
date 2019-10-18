@@ -46,7 +46,7 @@ use std::{fmt, io, ops};
 
 mod helpers;
 
-#[cfg(any(test, fuzzing))]
+#[cfg(any(test, feature = "fuzzing"))]
 #[macro_use]
 pub mod test_util;
 

@@ -11,6 +11,9 @@ case "$1" in
 *whole*)
   DICT=dict/whole
   ;;
+*string*)
+  DICT=dict/read-to-string
+  ;;
 *)
   echo unknown fuzzing target $1
   exit 1

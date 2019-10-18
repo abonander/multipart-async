@@ -7,8 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-afl = "0.4"
-multipart-async = { path = "../", features = ["server", "fuzzing"] }
+afl = "0.5"
+multipart-async = { path = "../", features = ["server", "fuzzing"], default-features = false }
 
 [workspace]
 members = ["."]

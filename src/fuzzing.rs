@@ -189,4 +189,5 @@ fn test_fuzz_read_to_string() {
     let _ = env_logger::try_init();
     fuzz_read_to_string(b"Hello, world!");
     fuzz_read_to_string("(╯°□°)╯︵ ┻━┻".as_bytes());
+    fuzz_read_to_string(&[0x00, 0x00, 0x04, 0x65, 0x6C, 0x60, 0x65, 0x31, 0xEF, 0xE2]);
 }
