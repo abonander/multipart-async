@@ -24,7 +24,6 @@ use super::Multipart;
 
 pub use self::headers::FieldHeaders;
 pub(crate) use self::headers::ReadHeaders;
-use futures_util::TryStreamExt;
 
 // mod collect;
 mod headers;
@@ -185,7 +184,7 @@ where
     type Output = super::Result<String, S::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        while let Some(mut data) = ready!(self.stream.try_poll_next_unpin(cx)?) {
+        while let Some(mut data) = ready!(Pin::new(&mut self.stream).try_poll_next(cx)?) {
             if let Some((mut start, start_len)) = self.surrogate {
                 assert!(
                     start_len > 0 && start_len < 4,
