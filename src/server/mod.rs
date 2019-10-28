@@ -218,6 +218,11 @@ where
         NextField::new(Pin::new(self))
     }
 
+    /// Same as [`.next_field()`](#method.next_field) but with a receiver of `Pin<&mut Self>`.
+    pub fn next_field_pinned(self: Pin<&mut Self>) -> NextField<S> {
+        NextField::new(self)
+    }
+
     /// Poll for the next boundary, returning `true` if a field should follow that boundary,
     /// or `false` if the request is at an end. See above for the overall flow.
     ///
