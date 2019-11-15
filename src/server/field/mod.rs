@@ -8,12 +8,14 @@
 use std::fmt;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::Poll::*;
 use std::{mem, str};
 
-use futures_core::{Future, Poll, Stream, TryStream};
+use futures_core::{Future, Stream, TryStream};
 //pub use self::collect::{ReadTextField, TextField};
-use futures_core::task::Context;
+use futures_core::task::{
+    Context,
+    Poll::{self, *},
+};
 
 use crate::server::Error::Utf8;
 use crate::server::{Error, PushChunk};
