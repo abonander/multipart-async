@@ -18,7 +18,7 @@ edition = "2018"
 categories = ["web-programming::http-client", "web-programming::http-server", "asynchronous"]
 
 [dependencies]
-bytes = "0.4.4"
+bytes = "0.5"
 display_bytes = "0.2.1"
 http = "0.1.0"
 log = "0.4"
@@ -34,17 +34,16 @@ futures-core = "0.3.1"
 futures-util = { version = "0.3.1", default-features = false, optional = true }
 futures-test = { version = "0.3.1", optional = true }
 
-hyper = { git = "https://github.com/hyperium/hyper", rev = "71d088d", features = ["unstable-stream"], optional = true }
+hyper = { git = "https://github.com/hyperium/hyper", rev = "78e8da1" }
 
-tokio-io = { version = "0.2.0-alpha.5", optional = true }
-tokio-fs = { version = "0.2.0-alpha.5", optional = true }
+tokio = { version = "0.2.2", features = ["fs", "macros", "io-std"], optional = true }
 
 # only used in integration testing; optional instead of dev dep so it doesn't require cURL
 # to be installed for all contributors
 curl = { version = "0.4", optional = true }
 
 [features]
-client = ["rand", "tokio-io", "mime_guess", "futures-util"]
+client = ["rand", "tokio", "mime_guess", "futures-util"]
 default = ["client", "server"]
 server = ["twoway", "httparse"]
 # Expose APIs used for fuzzing
@@ -52,8 +51,6 @@ server = ["twoway", "httparse"]
 fuzzing = ["futures-util", "futures-test"]
 
 [dev-dependencies]
-hyper = { git = "https://github.com/hyperium/hyper", rev = "71d088d", features = ["unstable-stream"] }
-tokio = "0.2.0-alpha.4"
 lazy_static = "1.3.0"
 futures = "0.3.1"
 futures-test = "0.3.1"

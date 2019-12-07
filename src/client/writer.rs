@@ -15,7 +15,7 @@ use futures_core::Stream;
 use futures_util::TryStreamExt;
 use http::header::HeaderName;
 use mime::Mime;
-use tokio_io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{copy, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub struct MultipartWriter<W> {
     inner: W,
@@ -79,7 +79,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
         content_type: Option<&Mime>,
     ) -> io::Result<()> {
         let mut header = Cursor::new(self.get_field_header(name, filename, content_type));
-        header.copy(&mut self.inner).await?;
+        copy(&mut header, &mut self.inner).await?;
         self.data_written = true;
         Ok(())
     }
@@ -109,7 +109,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     ) -> io::Result<&mut Self> {
         self.write_field_header(name, filename, content_type)
             .await?;
-        contents.copy(&mut self.inner).await?;
+        copy(&mut contents, &mut self.inner).await?;
         self.inner.write_all(b"\r\n").await?;
         Ok(self)
     }
@@ -148,7 +148,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     ///
     /// If you want to override the filename or content-type, use
     /// [`.write_field()`](#method.write_field) instead.
-    #[cfg(feature = "tokio-fs")]
+    #[cfg(feature = "tokio")]
     pub async fn write_file<P: AsRef<Path>>(
         &mut self,
         name: &str,
@@ -157,9 +157,10 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|s| s.to_str());
         let content_type = mime_guess::from_path(path).first_or_octet_stream();
-        let file = tokio_fs::File::open(path)?;
+        let file = tokio::fs::File::open(path).await?;
 
         self.write_field(name, filename, Some(&content_type), file)
+            .await
     }
 
     /// Write a plain text field to the output.
