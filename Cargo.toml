@@ -34,9 +34,9 @@ futures-core = "0.3.1"
 futures-util = { version = "0.3.1", default-features = false, optional = true }
 futures-test = { version = "0.3.1", optional = true }
 
-hyper = { git = "https://github.com/hyperium/hyper", rev = "78e8da1", optional = true }
+hyper = "0.13"
 
-tokio = { version = "0.2.2", features = ["fs", "macros", "io-std", "io-util"], optional = true }
+tokio = { version = "0.2", features = ["fs", "macros", "io-std", "io-util"], optional = true }
 
 # only used in integration testing; optional instead of dev dep so it doesn't require cURL
 # to be installed for all contributors
