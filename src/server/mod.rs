@@ -74,9 +74,6 @@ mod field;
 
 // pub use self::field::{ReadTextField, TextField};
 
-// #[cfg(feature = "hyper")]
-// mod hyper;
-
 #[cfg(any(test, feature = "fuzzing"))]
 pub(crate) mod fuzzing {
     pub(crate) use super::boundary::BoundaryFinder;
