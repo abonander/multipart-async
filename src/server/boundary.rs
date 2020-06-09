@@ -6,16 +6,17 @@
 // copied, modified, or distributed except according to those terms.
 extern crate twoway;
 
-use futures_core::{Poll, Stream};
+use futures_core::{Stream};
 
 use std::{fmt, mem};
+
 
 use super::PushChunk;
 use crate::BodyChunk;
 
 use self::State::*;
 use futures_core::stream::TryStream;
-use futures_core::Poll::*;
+use std::task::Poll::{self, *};
 
 use super::helpers::*;
 use crate::server::Error;

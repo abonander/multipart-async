@@ -8,10 +8,10 @@
 use std::fmt;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::Poll::*;
+use std::task::Poll::{self, *};
 use std::{mem, str};
 
-use futures_core::{Future, Poll, Stream, TryStream};
+use futures_core::{Future, Stream, TryStream};
 //pub use self::collect::{ReadTextField, TextField};
 use futures_core::task::Context;
 

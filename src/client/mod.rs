@@ -11,7 +11,7 @@
 
 use http::HeaderValue;
 use rand::distributions::{Alphanumeric, Distribution};
-use tokio_io::AsyncWrite;
+use tokio::io::AsyncWrite;
 
 use crate::client::writer::MultipartWriter;
 

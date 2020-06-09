@@ -1,7 +1,8 @@
 language: rust
 rust:
-#  - stable # FIXME: uncomment when 1.39 is released to stable on 2019-11-07
-#  - beta # FIXME: uncomment when 1.39 is released to beta on 2019-09-26
+  - 1.39.0
+  - stable
+  - beta
   - nightly
 os:
   - linux

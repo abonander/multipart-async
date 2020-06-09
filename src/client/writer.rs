@@ -6,7 +6,7 @@
 // copied, modified, or distributed except according to those terms.
 use std::error::Error;
 use std::future::Future;
-use std::io::{self, Cursor};
+use std::io::{Cursor};
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -15,7 +15,7 @@ use futures_core::Stream;
 use futures_util::TryStreamExt;
 use http::header::HeaderName;
 use mime::Mime;
-use tokio_io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub struct MultipartWriter<W> {
     inner: W,
@@ -79,7 +79,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
         content_type: Option<&Mime>,
     ) -> io::Result<()> {
         let mut header = Cursor::new(self.get_field_header(name, filename, content_type));
-        header.copy(&mut self.inner).await?;
+        io::copy(&mut header, &mut self.inner).await?;
         self.data_written = true;
         Ok(())
     }
@@ -109,7 +109,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     ) -> io::Result<&mut Self> {
         self.write_field_header(name, filename, content_type)
             .await?;
-        contents.copy(&mut self.inner).await?;
+        io::copy(&mut contents, &mut self.inner).await?;
         self.inner.write_all(b"\r\n").await?;
         Ok(self)
     }

@@ -15,9 +15,11 @@ use std::fmt;
 use std::pin::Pin;
 
 use futures_core::task::{self, Context};
-use futures_core::{Future, Poll, Stream};
+use futures_core::{Future, Stream};
 use http::{Method, Request};
 use mime::Mime;
+
+use std::task::Poll;
 
 use self::helpers::*;
 use crate::BodyChunk;
@@ -209,7 +211,7 @@ where
     /// # let ref mut cx = noop_context();
     /// # let future = example(stream);
     /// # pin_mut!(future);
-    /// # while let futures::Poll::Pending = future.as_mut().poll(cx) {}
+    /// # while let std::task::Poll::Pending = future.as_mut().poll(cx) {}
     /// ```
     pub fn next_field(&mut self) -> NextField<S>
     where

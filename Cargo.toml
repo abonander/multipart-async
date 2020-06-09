@@ -18,47 +18,44 @@ edition = "2018"
 categories = ["web-programming::http-client", "web-programming::http-server", "asynchronous"]
 
 [dependencies]
-bytes = "0.4.4"
+bytes = "0.5"
 display_bytes = "0.2.1"
-http = "0.1.0"
+http = "0.2"
 log = "0.4"
 mime = "0.3"
 mime_guess = { version = "2.0", optional = true }
 rand = { versoin = "0.7", optional = true }
-pin-utils = "0.1.0-alpha.4"
+pin-utils = "0.1.0"
 
 httparse = { version = "1.0", optional = true }
 twoway = { version = "0.2", optional = true }
 
-futures-core-preview = "0.3.0-alpha.19"
-futures-util-preview = { version = "0.3.0-alpha.19", default-features = false, optional = true }
-futures-test-preview = { version = "0.3.0-alpha.19", optional = true }
+futures-core = "0.3.5"
+futures-util = { version = "0.3.5", default-features = false, optional = true }
+futures-test = { version = "0.3.5", optional = true }
 
-hyper = { version = "0.13.0-alpha.4", optional = true, features = ["unstable-stream"] }
-
-tokio-io = { version = "0.2.0-alpha.5", optional = true }
-tokio-fs = { version = "0.2.0-alpha.5", optional = true }
+hyper = { version = "0.13.6", optional = true, default-features = false, features = ["stream"] }
+tokio = { version = "0.2.21", optional = true, default-features = false, features = ["io-util"] }
 
 # only used in integration testing; optional instead of dev dep so it doesn't require cURL
 # to be installed for all contributors
 curl = { version = "0.4", optional = true }
 
 [features]
-client = ["rand", "tokio-io", "mime_guess", "futures-util-preview"]
+client = ["rand", "tokio", "mime_guess", "futures-util"]
 default = ["client", "server"]
 server = ["twoway", "httparse"]
 # Expose APIs used for fuzzing
 # Note: these APIs are not considered part of the public API and may break
-fuzzing = ["futures-util-preview", "futures-test-preview"]
+fuzzing = ["futures-util", "futures-test"]
 
 [dev-dependencies]
-hyper = "0.13.0-alpha.1"
-tokio = "0.2.0-alpha.4"
+hyper = "0.13.6"
 lazy_static = "1.3.0"
-futures-preview = "0.3.0-alpha.18"
-futures-test-preview = "0.3.0-alpha.18"
-futures-util-preview = { version = "0.3.0-alpha.18", default-features = false }
+futures = "0.3.5"
+futures-test = "0.3.5"
 env_logger = "0.6.2"
+tokio = { version = "0.2.21", features = ["macros"] }
 
 #[[bin]]
 #name = "form_test"
