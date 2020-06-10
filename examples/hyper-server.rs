@@ -1,12 +1,12 @@
 use httparse::Error::Status;
-use hyper::rt::{self, Future};
+use hyper::rt;
 use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
 use multipart_async::server::Multipart;
 use std::net::TcpStream;
 
-use futures::{FutureExt, TryStreamExt};
+use futures::{Future, FutureExt, TryStreamExt};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 

@@ -162,19 +162,3 @@ impl BodyChunk for Bytes {
         self.as_ref()
     }
 }
-
-#[cfg(feature = "hyper")]
-impl BodyChunk for hyper::Chunk {
-    fn split_into(self, idx: usize) -> (Self, Self) {
-        let (left, right) = self.into_bytes().split_into(idx);
-        (left.into(), right.into())
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        self
-    }
-
-    fn into_vec(self) -> Vec<u8> {
-        self.to_vec()
-    }
-}
