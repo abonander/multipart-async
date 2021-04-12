@@ -30,7 +30,8 @@ impl MultipartRequest {
         boundary.extend(
             Alphanumeric
                 .sample_iter(rand::thread_rng())
-                .take(BOUNDARY_LEN),
+                .take(BOUNDARY_LEN)
+                .map(char::from),
         );
 
         MultipartRequest { boundary }

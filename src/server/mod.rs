@@ -48,10 +48,6 @@ macro_rules! ret_err (
     )
 );
 
-macro_rules! ret_ok(
-    ($expr:expr) => (return Ok($expr).into());
-);
-
 macro_rules! fmt_err (
     ($string:expr) => (
         Err(crate::server::Error::Parsing($string.into()))

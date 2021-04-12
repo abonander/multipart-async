@@ -45,10 +45,6 @@ impl<'a, S: TryStream + 'a> NextField<'a, S> {
             has_next_field: false,
         }
     }
-
-    fn multipart(&mut self) -> Option<Pin<&mut Multipart<S>>> {
-        Some(self.multipart.as_mut()?.as_mut())
-    }
 }
 
 impl<'a, S: 'a> Future for NextField<'a, S>
@@ -270,17 +266,6 @@ fn utf8_char_width(first: u8) -> Option<usize> {
         0xF0..=0xF4 => Some(4),
         _ => None,
     }
-}
-
-#[test]
-fn assert_types_unpin() {
-    use crate::test_util::assert_unpin;
-
-    fn inner<'a, S: TryStream + 'a>() {
-        assert_unpin::<FieldData<'a, S>>();
-    }
-
-    // `Unpin` is checked on `ReadToString` in `test_read_to_string()`.
 }
 
 #[test]

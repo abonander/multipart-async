@@ -6,7 +6,7 @@
 // copied, modified, or distributed except according to those terms.
 use std::error::Error;
 use std::future::Future;
-use std::io::{Cursor};
+use std::io::Cursor;
 use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -50,7 +50,7 @@ impl<W> MultipartWriter<W> {
         }
 
         if let Some(content_type) = content_type {
-            write!(header, "\r\nContent-Type: {}", content_type);
+            let _ = write!(header, "\r\nContent-Type: {}", content_type);
         }
 
         header.push_str("\r\n\r\n");
@@ -118,13 +118,7 @@ impl<W: AsyncWrite + Unpin> MultipartWriter<W> {
     /// See that method for details on these parameters.
     ///
     /// Errors from the stream will be wrapped as `io::ErrorKind::Other`.
-    pub async fn write_stream<B, E, S>(
-        &mut self,
-        name: &str,
-        filename: Option<&str>,
-        content_type: Option<&Mime>,
-        mut contents: S,
-    ) -> io::Result<&mut Self>
+    pub async fn write_stream<B, E, S>(&mut self, contents: S) -> io::Result<&mut Self>
     where
         B: AsRef<[u8]>,
         E: Into<Box<dyn Error + Send + Sync>>,

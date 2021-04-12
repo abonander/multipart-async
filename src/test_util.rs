@@ -72,22 +72,6 @@ macro_rules! ready_assert_eq(
     }}
 );
 
-macro_rules! ready_assert(
-    (|$cx:ident| $expr:expr) => {{
-        use std::task::Poll::*;
-        let ref mut $cx = futures_test::task::noop_context();
-        loop {
-            match $expr {
-                Ready(val) => {
-                    assert!(val);
-                    break;
-                },
-                Pending => (),
-            }
-        }
-    }}
-);
-
 pub fn run_future_hot<F>(f: F) -> F::Output
 where
     F: Future,
