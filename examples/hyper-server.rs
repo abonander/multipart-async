@@ -1,12 +1,12 @@
-use httparse::Error::Status;
-use hyper::rt;
-use hyper::server::conn::AddrStream;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server, StatusCode};
-use multipart_async::server::Multipart;
-use std::net::TcpStream;
+use hyper::{
+    server::conn::AddrStream,
+    service::{make_service_fn, service_fn},
+    Body, Request, Response, Server, StatusCode,
+};
 
-use futures::{Future, FutureExt, TryStreamExt};
+use multipart_async::server::Multipart;
+
+use futures::TryStreamExt;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -38,7 +38,7 @@ async fn handle_request(req: Request<Body>) -> Result<Response<Body>, Error> {
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::from(e.to_string()))?,
         },
-        Err(req) => Response::new(Body::from("expecting multipart/form-data")),
+        Err(_req) => Response::new(Body::from("expecting multipart/form-data")),
     })
 }
 
