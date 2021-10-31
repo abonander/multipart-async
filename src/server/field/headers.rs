@@ -318,7 +318,7 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> Result<(), String> 
 
         match key {
             "name" => out.name = val.to_string(),
-            "filename" => out.filename = Some(val.to_string()),
+            "filename" => out.filename = Some(val),
             _ => debug!(
                 "unknown key-value pair in Content-Disposition: {:?} = {:?}",
                 key, val
@@ -336,7 +336,7 @@ fn parse_cont_disp_val(val: &str, out: &mut FieldHeaders) -> Result<(), String> 
     Ok(())
 }
 
-fn parse_keyval(input: &str) -> Option<(&str, &str, &str)> {
+fn parse_keyval(input: &str) -> Option<(&str, String, &str)> {
     if input.trim().is_empty() {
         return None;
     }
@@ -356,7 +356,7 @@ fn param_name(input: &str) -> Option<(&str, &str)> {
     Some((name, rem))
 }
 
-fn param_val(input: &str) -> Option<(&str, &str)> {
+fn param_val(input: &str) -> Option<(String, &str)> {
     // continue until the opening quote or the terminating semicolon
     let mut tk_splits = input.splitn(2, &['"', ';'][..]);
 
@@ -365,20 +365,35 @@ fn param_val(input: &str) -> Option<(&str, &str)> {
 
     // the value doesn't have to be in quotes if it doesn't contain forbidden chars like `;`
     if !token.is_empty() {
-        return Some((token, rem.trim_matches(&[' ', ';'][..])));
+        return Some((String::from(token), rem.trim_matches(&[' ', ';'][..])));
     }
 
+    // quoted-string: defined in RFC6266 -> RFC2616 Section 3.6
+    let mut escaping = false;
+    let mut qstr = String::new();
+    let mut end = None;
     // continue until the terminating quote
-    let mut qt_splits = rem.splitn(2, '"');
-
-    let qstr = try_opt!(qt_splits.next()).trim();
-    let rem = qt_splits
-        .next()
-        .unwrap_or_else(|| {
-            warn!("unterminated quote: {:?}", qstr);
-            ""
-        })
-        .trim_matches(&[' ', ';'][..]);
+    for (i, c) in rem.chars().enumerate() {
+        if escaping {
+            // any escaped char is kept as-is
+            escaping = false;
+            qstr.push(c);
+        } else if c == '\\' {
+            // backslash starts escaping
+            escaping = true;
+        } else if c == '"' {
+            // unescaped double quote indicates terminating
+            end = Some(i + 1); // right boundary is exclusive
+            break;
+        } else {
+            qstr.push(c);
+        }
+    }
+    let end = end.unwrap_or_else(|| {
+        warn!("unterminated quote: {:?}", qstr);
+        rem.len()
+    });
+    let rem = rem[end..].trim_matches(&[' ', ';'][..]);
 
     Some((qstr, rem))
 }
@@ -398,19 +413,35 @@ fn test_parse_keyval() {
         parse_keyval("name = field; x-attr = \"some;value\"; filename = file.bin"),
         Some((
             "name",
-            "field",
+            String::from("field"),
             "x-attr = \"some;value\"; filename = file.bin"
         ))
     );
 
     assert_eq!(
         parse_keyval("x-attr = \"some;value\"; filename = file.bin"),
-        Some(("x-attr", "some;value", "filename = file.bin"))
+        Some(("x-attr", String::from("some;value"), "filename = file.bin"))
+    );
+
+    // quote in quoted string
+    assert_eq!(
+        parse_keyval(r#"filename = "James's \"README\".pdf"; x-attr = foobar"#),
+        Some((
+            "filename",
+            String::from("James's \"README\".pdf"),
+            "x-attr = foobar"
+        ))
+    );
+
+    // uncessary escaping
+    assert_eq!(
+        parse_keyval("x-attr = \"some\\value\"; filename = file.bin"),
+        Some(("x-attr", String::from("somevalue"), "filename = file.bin"))
     );
 
     assert_eq!(
         parse_keyval("filename = file.bin"),
-        Some(("filename", "file.bin", ""))
+        Some(("filename", String::from("file.bin"), ""))
     );
 
     assert_eq!(parse_keyval(""), None);
